@@ -13,6 +13,7 @@ This documentation set is intentionally small and operational. It explains the p
 | [Desktop UI](../apps/desktop-ui/README.md) | React/Vite UI package responsibilities and commands. |
 | [Windows Shell](../apps/windows-shell/README.md) | WPF/WebView2 host responsibilities and packaging behavior. |
 | [Contributing](../CONTRIBUTING.md) | Contribution workflow, checks, and project conventions. |
+| [Maintainers Guide](../MAINTAINERS.md) | Review policy, dependency update cadence, and release readiness checks. |
 | [Security](../SECURITY.md) | Vulnerability reporting and secret-handling policy. |
 
 ## Repository Standards

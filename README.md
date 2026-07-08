@@ -129,6 +129,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\desktop\verify-win
 - [Windows shell package](apps/windows-shell/README.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [中文贡献指南](CONTRIBUTING.zh-CN.md)
+- [Maintainers guide](MAINTAINERS.md)
+- [中文维护者指南](docs/zh-CN/MAINTAINERS.md)
 - [Security policy](SECURITY.md)
 
 ## Project Status

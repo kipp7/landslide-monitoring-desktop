@@ -13,6 +13,7 @@
 | [Desktop UI](../../apps/desktop-ui/README.md) | React/Vite UI 包职责和命令。 |
 | [Windows Shell](../../apps/windows-shell/README.md) | WPF/WebView2 宿主职责和打包行为。 |
 | [中文贡献指南](../../CONTRIBUTING.zh-CN.md) | 贡献流程、检查命令和项目约定。 |
+| [维护者指南](MAINTAINERS.md) | 评审策略、依赖更新节奏和发布前检查。 |
 | [安全策略](../../SECURITY.md) | 漏洞报告和凭据处理策略。 |
 
 ## 仓库规范
