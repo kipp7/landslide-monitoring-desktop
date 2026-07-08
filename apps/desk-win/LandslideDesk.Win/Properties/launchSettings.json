@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "LandslideDesk.Win (Dev)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DESK_DEV_SERVER_URL": "http://localhost:5174/"
+      }
+    }
+  }
+}
+

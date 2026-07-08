@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?include BuildInfo.wxi?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+    Name="山体滑坡监测桌面端 安装程序"
+    Manufacturer="山体滑坡监测平台"
+    Version="$(var.BundleVersion)"
+    UpgradeCode="{F3F4BEB7-6F61-4B44-B86D-2B79F7B4AFD2}"
+    Compressed="yes"
+    IconSourceFile="..\LandslideDesk.Win\Assets\LandslideDesk.ico"
+    SplashScreenSourceFile="..\LandslideDesk.Win\Assets\LandslideDesk.ico"
+    HelpUrl="https://github.com/kipp7/landslide-monitoring-desktop"
+    AboutUrl="https://github.com/kipp7/landslide-monitoring-desktop">
+
+    <BootstrapperApplication SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.exe">
+      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.deps.json" Name="LandslideDesk.CustomBA.deps.json" />
+      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.dll" Name="LandslideDesk.CustomBA.dll" />
+      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.runtimeconfig.json" Name="LandslideDesk.CustomBA.runtimeconfig.json" />
+      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.ico" Name="LandslideDesk.ico" />
+      <Payload SourceFile="$(var.CustomBAOutputDir)\WixToolset.BootstrapperApplicationApi.dll" />
+      <Payload SourceFile="$(var.CustomBAOutputDir)\mbanative.dll" />
+    </BootstrapperApplication>
+
+    <Variable Name="InstallFolder"
+              Type="formatted"
+              Value="[LocalAppDataFolder]Programs\山体滑坡监测桌面端" />
+
+    <Chain>
+      <ExePackage
+        Id="DeskInnoInstaller"
+        SourceFile="$(var.CoreInstallerPath)"
+        Name="LandslideDesk-Setup-core.exe"
+        DisplayName="山体滑坡监测桌面端 Core Installer"
+        InstallArguments='/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR="[InstallFolder]"'
+        PerMachine="no"
+        Permanent="no"
+        Vital="yes"
+        Compressed="yes">
+        <ArpEntry
+          Id="{6F223F64-1B4C-4381-BE67-AC3AC8A7A78D}_is1"
+          Version="$(var.AppVersion)"
+          Win64="yes"
+          AdditionalUninstallArguments="/SUPPRESSMSGBOXES /NORESTART" />
+      </ExePackage>
+    </Chain>
+  </Bundle>
+</Wix>
+

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>LandslideDesk.CustomBA</AssemblyName>
+    <RootNamespace>LandslideDesk.CustomBA</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <StartupObject>LandslideDesk.CustomBA.Program</StartupObject>
+    <ApplicationIcon>..\LandslideDesk.Win\Assets\LandslideDesk.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.BootstrapperApplicationApi" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\LandslideDesk.Win\Assets\LandslideDesk.ico" Link="LandslideDesk.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

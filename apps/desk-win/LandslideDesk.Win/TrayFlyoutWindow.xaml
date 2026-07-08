@@ -1,0 +1,121 @@
+<Window x:Class="LandslideDesk.Win.TrayFlyoutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="320"
+        SizeToContent="Height"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Background="Transparent"
+        AllowsTransparency="True"
+        WindowStartupLocation="Manual"
+        Deactivated="OnDeactivated"
+        KeyDown="OnKeyDown">
+  <Window.Resources>
+    <Style x:Key="TrayActionButton" TargetType="Button">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="#1F94A3B8" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="12,9" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#E2E8F0" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Root"
+                    CornerRadius="12"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter Margin="{TemplateBinding Padding}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Root" Property="Background" Value="#2216A34A" />
+                <Setter TargetName="Root" Property="BorderBrush" Value="#3322D3EE" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Root" Property="Background" Value="#3316A34A" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.6" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="TrayDangerButton" TargetType="Button" BasedOn="{StaticResource TrayActionButton}">
+      <Setter Property="BorderBrush" Value="#22EF4444" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Root"
+                    CornerRadius="12"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter Margin="{TemplateBinding Padding}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Root" Property="Background" Value="#22EF4444" />
+                <Setter TargetName="Root" Property="BorderBrush" Value="#55EF4444" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Root" Property="Background" Value="#33EF4444" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.6" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Border CornerRadius="16" BorderThickness="1" Padding="12">
+    <Border.BorderBrush>
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#3322D3EE" Offset="0" />
+        <GradientStop Color="#2238BDF8" Offset="1" />
+      </LinearGradientBrush>
+    </Border.BorderBrush>
+    <Border.Background>
+      <SolidColorBrush Color="#0D1B2D" Opacity="0.96" />
+    </Border.Background>
+
+    <StackPanel>
+      <StackPanel>
+        <TextBlock Text="滑坡监测预警平台"
+                   Foreground="#E2E8F0"
+                   FontSize="14"
+                   FontWeight="SemiBold" />
+        <TextBlock x:Name="HeaderMeta"
+                   Margin="0,2,0,0"
+                   Foreground="#94A3B8"
+                   FontSize="12" />
+      </StackPanel>
+
+      <Border Margin="0,10,0,10" Height="1" Background="#1F94A3B8" />
+
+      <StackPanel>
+        <Button Style="{StaticResource TrayActionButton}" Click="OnOpenMainClick">打开主窗口</Button>
+        <Button Margin="0,8,0,0" Style="{StaticResource TrayActionButton}" Click="OnOpenSettingsClick">系统设置</Button>
+        <Button Margin="0,8,0,0" Style="{StaticResource TrayActionButton}" Click="OnOpenLogsClick">打开日志目录</Button>
+        <Button Margin="0,8,0,0" Style="{StaticResource TrayActionButton}" Click="OnReloadClick">重新加载</Button>
+        <Button Margin="0,8,0,0" Style="{StaticResource TrayActionButton}" Click="OnToggleFullscreenClick">切换全屏 (F11)</Button>
+      </StackPanel>
+
+      <Border Margin="0,10,0,10" Height="1" Background="#1F94A3B8" />
+
+      <Button Style="{StaticResource TrayDangerButton}" Click="OnExitClick">退出</Button>
+    </StackPanel>
+  </Border>
+</Window>
+

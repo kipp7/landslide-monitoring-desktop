@@ -1,0 +1,238 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: #0b1220;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+#root {
+  height: 100%;
+}
+
+.desk-page {
+  min-height: 100vh;
+  padding: 18px 18px 18px 78px;
+}
+
+.desk-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.desk-loading {
+  height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.desk-dark-table {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.desk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.desk-table th,
+.desk-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desk-table th {
+  text-align: left;
+  color: rgba(34, 211, 238, 0.95);
+  background: rgba(51, 65, 85, 0.55);
+}
+
+.desk-table td {
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.desk-table tbody tr:hover td {
+  background: rgba(71, 85, 105, 0.22);
+}
+
+.desk-pill-tag {
+  border: 1px solid rgba(34, 211, 238, 0.28) !important;
+  background: rgba(34, 211, 238, 0.12) !important;
+  color: rgba(165, 243, 252, 0.95) !important;
+  font-weight: 800;
+  border-radius: 999px;
+  padding-inline: 8px;
+  margin-inline-end: 0 !important;
+}
+
+/* Ant Design Table dark tweaks (used with .desk-dark-table wrapper) */
+.desk-dark-table .ant-table,
+.desk-dark-table .ant-table-container,
+.desk-dark-table .ant-table-content,
+.desk-dark-table .ant-table-body,
+.desk-dark-table .ant-table-thead > tr > th,
+.desk-dark-table .ant-table-tbody > tr > td {
+  background: transparent !important;
+}
+
+.desk-dark-table .ant-table-thead > tr > th {
+  color: rgba(34, 211, 238, 0.95) !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12) !important;
+}
+
+.desk-dark-table .ant-table-tbody > tr > td {
+  color: rgba(226, 232, 240, 0.9) !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12) !important;
+}
+
+.desk-dark-table .ant-table-tbody > tr:hover > td,
+.desk-dark-table .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: rgba(71, 85, 105, 0.22) !important;
+}
+
+/* Ant Design dark polish (Select/Modal/Tabs/Pagination) */
+.desk-app .ant-select-selector,
+.desk-page .ant-select-selector {
+  background: rgba(51, 65, 85, 0.22) !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+.desk-app .ant-select-selection-placeholder,
+.desk-page .ant-select-selection-placeholder {
+  color: rgba(148, 163, 184, 0.85) !important;
+}
+
+.desk-app .ant-select-dropdown,
+.desk-page .ant-select-dropdown {
+  background: rgba(15, 23, 42, 0.96) !important;
+  border: 1px solid rgba(148, 163, 184, 0.28) !important;
+}
+
+.desk-app .ant-select-item-option-content,
+.desk-page .ant-select-item-option-content {
+  color: rgba(226, 232, 240, 0.92) !important;
+}
+
+.desk-app .ant-select-item-option-selected:not(.ant-select-item-option-disabled),
+.desk-page .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: rgba(34, 211, 238, 0.12) !important;
+}
+
+.desk-app .ant-modal-content,
+.desk-page .ant-modal-content {
+  background: rgba(15, 23, 42, 0.96) !important;
+  border: 1px solid rgba(34, 211, 238, 0.12);
+  box-shadow: 0 0 28px rgba(0, 255, 255, 0.08);
+}
+
+.desk-app .ant-modal-header,
+.desk-page .ant-modal-header {
+  background: transparent !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14) !important;
+}
+
+.desk-app .ant-tabs-nav::before,
+.desk-page .ant-tabs-nav::before {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18) !important;
+}
+
+.desk-app .ant-tabs-tab,
+.desk-page .ant-tabs-tab {
+  color: rgba(148, 163, 184, 0.92) !important;
+}
+
+.desk-app .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn,
+.desk-page .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: rgba(34, 211, 238, 0.95) !important;
+}
+
+.desk-app .ant-tabs-ink-bar,
+.desk-page .ant-tabs-ink-bar {
+  background: rgba(34, 211, 238, 0.95) !important;
+}
+
+.desk-app .ant-pagination .ant-pagination-item,
+.desk-page .ant-pagination .ant-pagination-item {
+  background: rgba(51, 65, 85, 0.18) !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+}
+
+.desk-app .ant-pagination .ant-pagination-item a,
+.desk-page .ant-pagination .ant-pagination-item a {
+  color: rgba(226, 232, 240, 0.9) !important;
+}
+
+.desk-app .ant-pagination .ant-pagination-item-active,
+.desk-page .ant-pagination .ant-pagination-item-active {
+  border-color: rgba(34, 211, 238, 0.55) !important;
+  background: rgba(34, 211, 238, 0.12) !important;
+}
+
+.desk-app .ant-pagination .ant-pagination-item-active a,
+.desk-page .ant-pagination .ant-pagination-item-active a {
+  color: rgba(165, 243, 252, 0.95) !important;
+}
+
+.desk-reduced-motion *,
+.desk-reduced-motion *::before,
+.desk-reduced-motion *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+
+/* Modern scrollbars (Chromium/WebView2 + Firefox fallback) */
+:root {
+  --desk-scrollbar-thumb: rgba(148, 163, 184, 0.32);
+  --desk-scrollbar-thumb-hover: rgba(34, 211, 238, 0.48);
+  --desk-scrollbar-track: rgba(2, 6, 23, 0.24);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--desk-scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--desk-scrollbar-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--desk-scrollbar-thumb-hover);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

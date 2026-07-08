@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?include BuildInfo.wxi?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+    Name="山体滑坡监测桌面端 安装程序"
+    Manufacturer="山体滑坡监测平台"
+    Version="$(var.BundleVersion)"
+    UpgradeCode="{A5E801B7-9B52-4E5A-BD7A-7D0FE17C53A6}"
+    Compressed="yes"
+    IconSourceFile="..\LandslideDesk.Win\Assets\LandslideDesk.ico"
+    SplashScreenSourceFile="..\..\desk\public\images\app-icon.png"
+    HelpUrl="https://github.com/kipp7/landslide-monitoring-desktop"
+    AboutUrl="https://github.com/kipp7/landslide-monitoring-desktop"
+    bal:CommandLineVariables="caseInsensitive">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+        Theme="hyperlinkSidebarLicense"
+        ThemeFile="BrandSidebarTheme.xml"
+        LogoFile="assets\BrandLogo.png"
+        LogoSideFile="assets\BrandSidebar.png"
+        LicenseUrl=""
+        LocalizationFile="WixStdBA.zh-CN.wxl"
+        ShowVersion="yes"
+        LaunchTarget="[InstallFolder]\LandslideDesk.Win.exe"
+        LaunchWorkingFolder="[InstallFolder]"
+        SuppressOptionsUI="no"
+        SuppressRepair="yes" />
+    </BootstrapperApplication>
+
+    <Variable Name="InstallFolder"
+              Type="formatted"
+              Value="[LocalAppDataFolder]Programs\山体滑坡监测桌面端"
+              bal:Overridable="yes" />
+
+    <Chain>
+      <ExePackage
+        Id="DeskInnoInstaller"
+        SourceFile="$(var.CoreInstallerPath)"
+        Name="LandslideDesk-Setup-core.exe"
+        DisplayName="山体滑坡监测桌面端 Core Installer"
+        InstallArguments='/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR="[InstallFolder]"'
+        PerMachine="no"
+        Permanent="no"
+        Vital="yes"
+        Compressed="yes">
+        <ArpEntry
+          Id="{6F223F64-1B4C-4381-BE67-AC3AC8A7A78D}_is1"
+          Version="$(var.AppVersion)"
+          Win64="yes"
+          AdditionalUninstallArguments="/SUPPRESSMSGBOXES /NORESTART" />
+      </ExePackage>
+    </Chain>
+  </Bundle>
+</Wix>
+

@@ -1,0 +1,17 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+    <OutputName Condition="'$(BundleOutputName)' != ''">$(BundleOutputName)</OutputName>
+    <OutputPath Condition="'$(BundleOutputDir)' != ''">$(BundleOutputDir)\</OutputPath>
+    <PublishDir Condition="'$(BundleOutputDir)' != ''">$(BundleOutputDir)\</PublishDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.BootstrapperApplications.wixext" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="BuildInfo.wxi" />
+    <None Include="BuildInfo.wxi" />
+  </ItemGroup>
+</Project>

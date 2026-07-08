@@ -1,0 +1,53 @@
+{
+  "name": "landslide-monitoring-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows desktop client for landslide monitoring, built with React, Vite, WPF, and WebView2.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kipp7/landslide-monitoring-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kipp7/landslide-monitoring-desktop/issues"
+  },
+  "homepage": "https://github.com/kipp7/landslide-monitoring-desktop#readme",
+  "workspaces": [
+    "apps/desk"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm -w apps/desk run dev",
+    "build": "npm -w apps/desk run build",
+    "preview": "npm -w apps/desk run preview",
+    "lint": "npm -w apps/desk run lint",
+    "desktop:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/start-dev.ps1",
+    "desktop:publish": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/publish-desk-win.ps1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.18.0"
+  },
+  "keywords": [
+    "landslide-monitoring",
+    "desktop",
+    "wpf",
+    "webview2",
+    "react",
+    "vite",
+    "gis",
+    "iot",
+    "early-warning"
+  ],
+  "author": "kipp7",
+  "license": "MIT"
+}
+

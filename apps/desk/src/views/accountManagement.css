@@ -1,0 +1,76 @@
+.desk-account-page {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(34, 211, 238, 0.14), transparent 30%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(2, 6, 23, 0.94));
+}
+
+.desk-account-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.desk-account-kpi-value {
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.15;
+  color: rgba(226, 232, 240, 0.98);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desk-account-kpi-label {
+  margin-top: 6px;
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 12px;
+}
+
+.desk-account-table {
+  min-height: calc(100vh - 254px);
+}
+
+.desk-account-table .ant-table-wrapper,
+.desk-account-table .ant-spin-nested-loading,
+.desk-account-table .ant-spin-container {
+  min-height: 100%;
+}
+
+.desk-account-name {
+  color: rgba(226, 232, 240, 0.96);
+  font-weight: 800;
+}
+
+.desk-account-sub {
+  margin-top: 2px;
+  color: rgba(148, 163, 184, 0.82);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.desk-account-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.desk-account-form .ant-input,
+.desk-account-form .ant-input-password,
+.desk-account-form .ant-select-selector {
+  background: rgba(15, 23, 42, 0.52) !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+}
+
+@media (max-width: 1200px) {
+  .desk-account-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .desk-account-summary,
+  .desk-account-form-grid {
+    grid-template-columns: 1fr;
+  }
+}

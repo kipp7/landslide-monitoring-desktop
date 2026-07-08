@@ -1,0 +1,189 @@
+.desk-hover-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100%;
+  z-index: 1000;
+}
+
+.desk-hover-sider {
+  height: 100%;
+  transition: all 300ms ease-in-out;
+}
+
+.desk-hover-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.desk-hover-sider-head {
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #22d3ee;
+  font-weight: 700;
+  font-size: 18px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.desk-hover-sider-head-icon {
+  flex: none;
+}
+
+.desk-hover-sider-head-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: translateX(-4px);
+  transition:
+    max-width 1ms linear 150ms,
+    opacity 120ms ease 150ms,
+    transform 120ms ease 150ms;
+}
+
+.desk-hover-sidebar.is-expanded .desk-hover-sider-head-label {
+  max-width: 90px;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.desk-hover-sider .ant-menu {
+  flex: 1;
+  min-height: 0;
+}
+
+.desk-hover-userbar {
+  flex: none;
+  padding: 10px 0 12px;
+  border-top: 1px solid rgba(34, 211, 238, 0.12);
+  background: transparent;
+}
+
+.desk-hover-user {
+  min-height: 40px;
+  margin: 4px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: rgba(226, 232, 240, 0.94);
+  overflow: hidden;
+}
+
+.desk-hover-user-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(165, 243, 252, 0.96);
+  background: transparent;
+  border: none;
+}
+
+.desk-hover-user-meta {
+  flex: 1;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: translateX(-4px);
+  transition:
+    max-width 1ms linear 150ms,
+    opacity 120ms ease 150ms,
+    transform 120ms ease 150ms;
+}
+
+.desk-hover-sidebar.is-expanded .desk-hover-user {
+  justify-content: flex-start;
+  padding-left: 24px;
+}
+
+.desk-hover-sidebar.is-expanded .desk-hover-user-meta {
+  max-width: 132px;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.desk-hover-user-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(248, 250, 252, 0.96);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desk-hover-user-role {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.desk-hover-logout {
+  width: calc(100% - 8px);
+  height: 40px;
+  margin: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  color: rgba(203, 213, 225, 0.92);
+  background: transparent;
+  padding: 0;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.desk-hover-sidebar.is-expanded .desk-hover-logout {
+  justify-content: flex-start;
+  padding-left: 24px;
+}
+
+.desk-hover-logout > .anticon {
+  width: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.desk-hover-sidebar.is-expanded .desk-hover-logout > .anticon {
+  width: 16px;
+  flex: none;
+}
+
+.desk-hover-logout:hover {
+  color: rgba(255, 255, 255, 0.96);
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.desk-hover-logout-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width 1ms linear 150ms,
+    opacity 120ms ease 150ms;
+}
+
+.desk-hover-sidebar.is-expanded .desk-hover-logout-label {
+  max-width: 72px;
+  opacity: 1;
+}

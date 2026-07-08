@@ -1,0 +1,68 @@
+<WixLocalization Culture="zh-cn" Language="2052" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="Caption" Value="[WixBundleName]" />
+  <String Id="Title" Value="[WixBundleName]" />
+  <String Id="CheckingForUpdatesLabel" Value="正在检查更新" />
+  <String Id="UpdateButton" Value="更新到版本 [WixStdBAUpdateAvailable]" />
+
+  <String Id="InstallHeader" Value="欢迎使用" />
+  <String Id="InstallMessage" Value="安装程序将把 [WixBundleName] 安装到当前电脑。点击“安装”继续，或点击“取消”退出。" />
+  <String Id="InstallMessageOptions" Value="安装程序将把 [WixBundleName] 安装到当前电脑。点击“安装”继续，点击“选项”调整安装目录，或点击“取消”退出。" />
+  <String Id="InstallVersion" Value="版本 [WixBundleVersion]" />
+  <String Id="ConfirmCancelMessage" Value="确定要取消安装吗？" />
+  <String Id="ExecuteUpgradeRelatedBundleMessage" Value="已检测到旧版本" />
+
+  <String Id="HelpHeader" Value="安装帮助" />
+  <String Id="HelpText" Value="/install | /repair | /uninstall | /layout [directory] 用于安装、修复、卸载，或在指定目录创建完整离线副本。默认动作为安装。&#xA;&#xA;/passive | /quiet 表示最少界面或静默模式。默认显示完整界面。&#xA;&#xA;/norestart 表示禁止自动重启。/log log.txt 表示写入指定日志文件。默认日志会写入 %TEMP%。" />
+  <String Id="HelpCloseButton" Value="关闭" />
+
+  <String Id="InstallLicenseLinkText" Value="" />
+  <String Id="InstallAcceptCheckbox" Value="我同意许可协议条款" />
+  <String Id="InstallOptionsButton" Value="选项" />
+  <String Id="InstallInstallButton" Value="安装" />
+  <String Id="InstallCancelButton" Value="取消" />
+
+  <String Id="OptionsHeader" Value="安装选项" />
+  <String Id="OptionsLocationLabel" Value="安装目录：" />
+  <String Id="OptionsPerUserScopeText" Value="仅为当前用户安装 [WixBundleName]" />
+  <String Id="OptionsPerMachineScopeText" Value="为所有用户安装 [WixBundleName]" />
+  <String Id="OptionsBrowseButton" Value="浏览" />
+  <String Id="OptionsOkButton" Value="确定" />
+  <String Id="OptionsCancelButton" Value="取消" />
+
+  <String Id="ProgressHeader" Value="正在处理安装" />
+  <String Id="ProgressLabel" Value="当前步骤：" />
+  <String Id="OverallProgressPackageText" Value="正在初始化..." />
+  <String Id="ProgressCancelButton" Value="取消" />
+
+  <String Id="ModifyHeader" Value="修改安装" />
+  <String Id="ModifyRepairButton" Value="修复" />
+  <String Id="ModifyUninstallButton" Value="卸载" />
+  <String Id="ModifyCancelButton" Value="关闭" />
+
+  <String Id="SuccessHeader" Value="操作已完成" />
+  <String Id="SuccessCacheHeader" Value="缓存已完成" />
+  <String Id="SuccessInstallHeader" Value="安装已完成" />
+  <String Id="SuccessLayoutHeader" Value="离线布局已完成" />
+  <String Id="SuccessModifyHeader" Value="修改已完成" />
+  <String Id="SuccessRepairHeader" Value="修复已完成" />
+  <String Id="SuccessUninstallHeader" Value="卸载已完成" />
+  <String Id="SuccessUnsafeUninstallHeader" Value="卸载已完成" />
+  <String Id="SuccessLaunchButton" Value="启动" />
+  <String Id="SuccessRestartText" Value="需要重新启动计算机后，软件才能正常使用。" />
+  <String Id="SuccessUninstallRestartText" Value="需要重新启动计算机后，卸载才能完全生效。" />
+  <String Id="SuccessRestartButton" Value="立即重启" />
+  <String Id="SuccessCloseButton" Value="完成" />
+
+  <String Id="FailureHeader" Value="操作失败" />
+  <String Id="FailureCacheHeader" Value="缓存失败" />
+  <String Id="FailureInstallHeader" Value="安装失败" />
+  <String Id="FailureLayoutHeader" Value="离线布局失败" />
+  <String Id="FailureModifyHeader" Value="修改失败" />
+  <String Id="FailureRepairHeader" Value="修复失败" />
+  <String Id="FailureUninstallHeader" Value="卸载失败" />
+  <String Id="FailureUnsafeUninstallHeader" Value="卸载失败" />
+  <String Id="FailureHyperlinkLogText" Value="安装未完成。你可以打开日志文件查看详细原因。" />
+  <String Id="FailureRestartText" Value="需要重新启动计算机后，系统才能恢复到稳定状态。" />
+  <String Id="FailureRestartButton" Value="立即重启" />
+  <String Id="FailureCloseButton" Value="关闭" />
+</WixLocalization>

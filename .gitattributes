@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Windows scripts (PowerShell) also work with LF, keep consistent
+*.ps1 text eol=lf
+
+# Mark binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.rar binary
+*.zip binary
+*.pdf binary
