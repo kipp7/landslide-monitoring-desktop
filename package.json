@@ -31,7 +31,7 @@
     "desktop:preflight": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/check-windows-prerequisites.ps1"
   },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.5",
     "eslint": "^9.17.0",
     "eslint-config-prettier": "^9.1.0",
