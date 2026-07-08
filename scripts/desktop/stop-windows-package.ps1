@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$PackageManifestFile = "docs/reports/desk-win-package-latest.json"
+  [string]$PackageManifestFile = "docs/reports/windows-package-latest.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +10,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $fullManifest = Join-Path $repoRoot $PackageManifestFile
 
 if (-not (Test-Path $fullManifest)) {
-  throw "desk-win package manifest not found: $PackageManifestFile"
+  throw "Windows package manifest not found: $PackageManifestFile"
 }
 
 $manifest = Get-Content -Path $fullManifest -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -28,7 +28,7 @@ foreach ($proc in $targets) {
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
   } catch {
     if (Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue) {
-      throw "failed stopping packaged desk-win pid=$($proc.ProcessId): $($_.Exception.Message)"
+      throw "failed stopping packaged Windows desktop pid=$($proc.ProcessId): $($_.Exception.Message)"
     }
   }
 }
@@ -38,4 +38,3 @@ foreach ($proc in $targets) {
   count = $targets.Count
   pids = @($targets | ForEach-Object { $_.ProcessId })
 } | ConvertTo-Json -Depth 4
-

@@ -2,8 +2,8 @@
 param(
   [string]$Configuration = "Release",
   [string]$Runtime = "win-x64",
-  [string]$SelfContainedOutputDir = "artifacts/desk-win/win-x64-selfcontained",
-  [string]$InstallerOutputDir = "artifacts/desk-win/installer",
+  [string]$SelfContainedOutputDir = "artifacts/windows/self-contained",
+  [string]$InstallerOutputDir = "artifacts/windows/installer",
   [string]$Version = "0.1.0",
   [switch]$SkipDeskBuild
 )
@@ -29,14 +29,13 @@ function Get-HashEntry([string]$path) {
 }
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$selfContainedScript = Join-Path $repoRoot "scripts/dev/publish-desk-win-selfcontained.ps1"
-$installerAssetsScript = Join-Path $repoRoot "scripts/dev/render-desk-win-installer-assets.ps1"
-$installerScript = Join-Path $repoRoot "apps/desk-win/installer/LandslideDesk.Win.iss"
-$reportFile = Join-Path $repoRoot "docs/reports/desk-win-installer-latest.json"
+$selfContainedScript = Join-Path $repoRoot "scripts/desktop/package-windows-self-contained.ps1"
+$installerScript = Join-Path $repoRoot "apps/windows-shell/installer/LandslideDesk.Win.iss"
+$reportFile = Join-Path $repoRoot "docs/reports/windows-installer-latest.json"
 $outDir = Join-Path $repoRoot $InstallerOutputDir
-$bootstrapperDir = Join-Path $repoRoot "artifacts/desk-win/prerequisites"
+$bootstrapperDir = Join-Path $repoRoot "artifacts/windows/prerequisites"
 $bootstrapperPath = Join-Path $bootstrapperDir "MicrosoftEdgeWebView2Setup.exe"
-$chineseLangPath = Join-Path $repoRoot "apps/desk-win/installer/ChineseSimplified.isl"
+$chineseLangPath = Join-Path $repoRoot "apps/windows-shell/installer/ChineseSimplified.isl"
 $isccCandidates = @(
   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
   "C:\Program Files\Inno Setup 6\ISCC.exe",
@@ -55,10 +54,6 @@ if (-not (Test-Path $installerScript)) {
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 New-Item -ItemType Directory -Path $bootstrapperDir -Force | Out-Null
 
-Invoke-Step "Render installer assets" {
-  powershell -NoProfile -ExecutionPolicy Bypass -File $installerAssetsScript
-}
-
 $selfContainedArgs = @(
   "-NoProfile",
   "-ExecutionPolicy", "Bypass",
@@ -71,11 +66,11 @@ if ($SkipDeskBuild.IsPresent) {
   $selfContainedArgs += "-SkipDeskBuild"
 }
 
-Invoke-Step "Publish desk-win self-contained package" {
+Invoke-Step "Publish Windows desktop self-contained package" {
   & powershell @selfContainedArgs
 }
 
-$selfContainedManifest = Get-Content -Path (Join-Path $repoRoot "docs/reports/desk-win-selfcontained-package-latest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$selfContainedManifest = Get-Content -Path (Join-Path $repoRoot "docs/reports/windows-self-contained-package-latest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $sourceDir = Join-Path $repoRoot ([string]$selfContainedManifest.outputDir)
 if (-not (Test-Path $sourceDir)) {
   throw "self-contained output not found: $sourceDir"
@@ -93,7 +88,7 @@ if (-not (Test-Path $chineseLangPath)) {
   }
 }
 
-$buildInfoFile = Join-Path $repoRoot "docs/reports/desk-win-build-info-latest.json"
+$buildInfoFile = Join-Path $repoRoot "docs/reports/windows-build-info-latest.json"
 $buildInfo = if (Test-Path $buildInfoFile) {
   Get-Content -Path $buildInfoFile -Raw -Encoding UTF8 | ConvertFrom-Json
 } else {
@@ -156,4 +151,3 @@ if ($reportDir -and -not (Test-Path $reportDir)) {
 }
 Set-Content -Path $reportFile -Value $json -Encoding UTF8
 $json
-

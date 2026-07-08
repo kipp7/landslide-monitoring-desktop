@@ -13,18 +13,22 @@
   },
   "homepage": "https://github.com/kipp7/landslide-monitoring-desktop#readme",
   "workspaces": [
-    "apps/desk"
+    "apps/desktop-ui"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev": "npm -w apps/desk run dev",
-    "build": "npm -w apps/desk run build",
-    "preview": "npm -w apps/desk run preview",
-    "lint": "npm -w apps/desk run lint",
-    "desktop:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/start-dev.ps1",
-    "desktop:publish": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/publish-desk-win.ps1"
+    "dev": "npm -w apps/desktop-ui run dev",
+    "build": "npm -w apps/desktop-ui run build",
+    "preview": "npm -w apps/desktop-ui run preview",
+    "lint": "npm -w apps/desktop-ui run lint",
+    "desktop:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/start-desktop-dev.ps1",
+    "desktop:publish": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/package-windows.ps1",
+    "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/package-windows.ps1",
+    "desktop:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/verify-windows-package.ps1",
+    "desktop:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/build-windows-installer.ps1",
+    "desktop:preflight": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/check-windows-prerequisites.ps1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
@@ -50,4 +54,3 @@
   "author": "kipp7",
   "license": "MIT"
 }
-

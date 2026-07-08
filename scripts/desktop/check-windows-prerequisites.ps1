@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$PackageManifestFile = "docs/reports/desk-win-package-latest.json",
-  [string]$OutFile = "docs/reports/desk-win-prerequisites-latest.json"
+  [string]$PackageManifestFile = "docs/reports/windows-package-latest.json",
+  [string]$OutFile = "docs/reports/windows-prerequisites-latest.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -114,4 +114,3 @@ if ($outDir -and -not (Test-Path $outDir)) {
 }
 Set-Content -Path $fullOutFile -Value $json -Encoding UTF8
 $json
-

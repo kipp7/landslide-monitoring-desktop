@@ -36,7 +36,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Restore Windows host
-        run: dotnet restore .\apps\desk-win\LandslideDesk.Win\LandslideDesk.Win.csproj
+        run: dotnet restore .\apps\windows-shell\LandslideDesk.Win\LandslideDesk.Win.csproj
 
       - name: Build Windows host
-        run: dotnet build .\apps\desk-win\LandslideDesk.Win\LandslideDesk.Win.csproj -c Release --no-restore
+        run: dotnet build .\apps\windows-shell\LandslideDesk.Win\LandslideDesk.Win.csproj -c Release --no-restore

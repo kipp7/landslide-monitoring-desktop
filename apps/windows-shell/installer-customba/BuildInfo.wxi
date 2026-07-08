@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Include>
+  <?define CoreInstallerPath = "artifacts\windows\installer\LandslideDesk-Setup-win-x64.exe" ?>
+  <?define CustomBAOutputDir = "artifacts\Windows desktop\customba-shell" ?>
+</Include>

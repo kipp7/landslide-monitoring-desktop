@@ -576,19 +576,19 @@ public partial class MainWindow : Window
           <br />
           2) 打包后的前端文件（随桌面端输出复制到 <code>web/</code>）
           <br /><br />
-          请先启动或构建 <code>apps/desk</code> 前端后再运行桌面端。
+          请先启动或构建 <code>apps/desktop-ui</code> 前端后再运行桌面端。
         </div>
         <pre>
 开发模式：
-npm -w apps/desk run dev
+npm -w apps/desktop-ui run dev
 PowerShell（仓库根目录）：
-$env:{{DevServerEnv}}="http://localhost:5174/"; dotnet run --project .\apps\desk-win\LandslideDesk.Win\LandslideDesk.Win.csproj
-PowerShell（当前目录为 apps/desk-win）：
+$env:{{DevServerEnv}}="http://localhost:5174/"; dotnet run --project .\apps\windows-shell\LandslideDesk.Win\LandslideDesk.Win.csproj
+PowerShell（当前目录为 apps/windows-shell）：
 $env:{{DevServerEnv}}="http://localhost:5174/"; dotnet run --project .\LandslideDesk.Win\LandslideDesk.Win.csproj
 
 生产构建：
-npm -w apps/desk run build
-dotnet publish .\apps\desk-win\LandslideDesk.Win\LandslideDesk.Win.csproj -c Release -r win-x64
+npm -w apps/desktop-ui run build
+dotnet publish .\apps\windows-shell\LandslideDesk.Win\LandslideDesk.Win.csproj -c Release -r win-x64
 dotnet publish .\LandslideDesk.Win\LandslideDesk.Win.csproj -c Release -r win-x64
         </pre>
       </div>

@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <DeskDistDir>..\\..\\desk\\dist</DeskDistDir>
+    <DeskDistDir>$(MSBuildProjectDirectory)\\..\\..\\desktop-ui\\dist</DeskDistDir>
     <ApplicationIcon>Assets\\LandslideDesk.ico</ApplicationIcon>
   </PropertyGroup>
 

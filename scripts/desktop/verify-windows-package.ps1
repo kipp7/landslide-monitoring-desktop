@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$PackageManifest = "docs/reports/desk-win-package-latest.json",
-  [string]$OutFile = "docs/reports/desk-win-package-verify-latest.json",
+  [string]$PackageManifest = "docs/reports/windows-package-latest.json",
+  [string]$OutFile = "docs/reports/windows-package-verify-latest.json",
   [int]$WaitSeconds = 15,
   [int]$PostReadyQuietSeconds = 60
 )
@@ -60,25 +60,25 @@ function Get-DeskRuntimeErrorInfo {
 }
 
 if (-not (Test-Path $fullManifest)) {
-  throw "desk-win package manifest not found: $PackageManifest"
+  throw "Windows package manifest not found: $PackageManifest"
 }
 
 $manifest = Get-Content -Path $fullManifest -Raw -Encoding UTF8 | ConvertFrom-Json
 $exePath = [string]$manifest.exe.path
 if (-not $exePath -or -not (Test-Path $exePath)) {
-  throw "desk-win exe not found: $exePath"
+  throw "Windows executable not found: $exePath"
 }
 
 $webIndex = [string]$manifest.web.indexPath
 if (-not $webIndex -or -not (Test-Path $webIndex)) {
-  throw "desk-win packaged web assets missing: $webIndex"
+  throw "Windows packaged web assets missing: $webIndex"
 }
 
 $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
   $_.Name -in @("LandslideDesk.Win.exe", "dotnet.exe") -and $_.CommandLine -like "*LandslideDesk.Win*"
 }
 if ($existing) {
-  throw "desk-win verification requires no running desk-win instance; currently running pids: $((@($existing | ForEach-Object { $_.ProcessId })) -join ',')"
+  throw "Windows package verification requires no running Windows desktop instance; currently running pids: $((@($existing | ForEach-Object { $_.ProcessId })) -join ',')"
 }
 
 $env:DESK_DEV_SERVER_URL = $null
@@ -138,16 +138,15 @@ if ($outDir -and -not (Test-Path $outDir)) {
 Set-Content -Path $fullOutFile -Value $json -Encoding UTF8
 
 if (-not $alive) {
-  throw "desk-win packaged exe did not stay alive during verification"
+  throw "Windows packaged exe did not stay alive during verification"
 }
 
 if (-not $ready) {
-  throw "desk-win packaged exe did not report app ready during verification"
+  throw "Windows packaged exe did not report app ready during verification"
 }
 
 if ($runtimeErrorInfo.count -gt 0) {
-  throw "desk-win packaged exe reported frontend runtime errors during verification"
+  throw "Windows packaged exe reported frontend runtime errors during verification"
 }
 
 $json
-

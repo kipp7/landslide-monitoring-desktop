@@ -39,9 +39,9 @@ TestResults/
 
 # Desktop release outputs
 artifacts/
-apps/desk-win/installer-customba/artifacts/
-apps/desk-win/installer-modern/artifacts/
-apps/desk-win/installer/Output/
+apps/windows-shell/installer-customba/artifacts/
+apps/windows-shell/installer-modern/artifacts/
+apps/windows-shell/installer/Output/
 
 # Local scratch
 .tmp/

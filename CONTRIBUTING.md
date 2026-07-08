@@ -1,5 +1,7 @@
 # Contributing
 
+[简体中文](CONTRIBUTING.zh-CN.md)
+
 Thanks for helping improve Landslide Monitoring Desktop.
 
 ## Development Setup
@@ -28,7 +30,7 @@ For Windows packaging changes, also run:
 
 ```powershell
 npm run desktop:publish
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\verify-desk-win-package.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\desktop\verify-windows-package.ps1
 ```
 
 ## Pull Request Guidelines
@@ -38,6 +40,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\verify-desk-wi
 - Update documentation when commands, setup, or behavior changes.
 - Avoid committing generated outputs from `artifacts/`, `dist/`, `bin/`, or `obj/`.
 - Do not commit real credentials, field deployment details, private endpoints, or local environment files.
+
+## Project Conventions
+
+- Use public-facing directory names such as `apps/desktop-ui` and `apps/windows-shell`.
+- Keep desktop automation under `scripts/desktop`.
+- Keep generated package reports under `docs/reports`.
+- Update both `README.md` and `README.zh-CN.md` for project-level presentation changes.
+- Prefer clear operational docs over internal work logs.
 
 ## Commit Style
 
