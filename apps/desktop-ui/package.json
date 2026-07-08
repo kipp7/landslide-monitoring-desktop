@@ -20,7 +20,7 @@
     "react-dom": "^18.2.0",
     "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.28.0",
-    "three": "^0.182.0",
+    "three": "^0.185.1",
     "tslib": "^2.6.2",
     "zustand": "^4.0.6"
   },
