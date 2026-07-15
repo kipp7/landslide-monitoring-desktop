@@ -8,9 +8,13 @@
 
 English | [简体中文](README.zh-CN.md)
 
+<p align="center">
+  <img src="docs/assets/branding/social-preview.png" alt="Landslide Monitoring Desktop" width="100%" />
+</p>
+
 Production-minded Windows desktop client for landslide monitoring, field-device supervision, and early-warning workflows.
 
-The repository is intentionally focused: it contains the maintained desktop experience only, with a React/Vite monitoring UI and a native WPF + WebView2 Windows shell. Backend services, mobile apps, deployment infrastructure, internal work logs, and private environment material are deliberately kept out of the public project.
+This repository focuses on the maintained desktop application: a React/Vite monitoring UI packaged in a native WPF + WebView2 Windows shell. Historical web, mobile, backend, and deployment work is kept outside this public desktop repo so the project stays easy to build, review, and maintain.
 
 ## Why This Project
 

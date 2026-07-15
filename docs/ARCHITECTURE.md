@@ -11,7 +11,7 @@ Operator
       -> Mock data or compatible monitoring API
 ```
 
-The public project does not include backend services, mobile clients, production deployment infrastructure, private field configuration, or internal work logs.
+Historical web, mobile, backend, and deployment work is outside the maintained desktop scope. The public tree is kept small so contributors can understand the application boundary quickly.
 
 ## Applications
 
