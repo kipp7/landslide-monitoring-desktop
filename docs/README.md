@@ -2,7 +2,7 @@
 
 English | [简体中文](zh-CN/README.md)
 
-This documentation set is intentionally small and operational. It explains the public desktop-client boundary, the application layout, and the local Windows packaging flow.
+This documentation set is intentionally small and operational. It explains the desktop application layout, local development flow, and Windows packaging process.
 
 ## Start Here
 
@@ -16,17 +16,17 @@ This documentation set is intentionally small and operational. It explains the p
 | [Maintainers Guide](../MAINTAINERS.md) | Review policy, dependency update cadence, and release readiness checks. |
 | [Security](../SECURITY.md) | Vulnerability reporting and secret-handling policy. |
 
-## Repository Standards
+## Repository Conventions
 
-- Public directory names should describe product responsibility, not internal history.
+- Directory names should describe product responsibility and avoid legacy shorthand.
 - Generated artifacts belong under `artifacts/` and must stay out of Git.
 - Local reports belong under `docs/reports/` and should be regenerated as needed.
 - Documentation should be updated in English and Chinese when public-facing behavior changes.
 - Pull requests should include screenshots or recordings for visible UI changes.
 
-## Current Public Boundary
+## Current Maintained Scope
 
-The public project includes:
+This repository includes:
 
 - Desktop UI source
 - Windows shell source
@@ -34,11 +34,9 @@ The public project includes:
 - Desktop packaging and verification scripts
 - Public documentation and GitHub project metadata
 
-The public project excludes:
+Historical or unmaintained directions are kept outside this desktop repository, including:
 
-- Backend services
-- Mobile apps
+- Backend services and deployment scripts
 - Web dashboards
-- Production infrastructure
-- Private field configuration
-- Internal journals, work logs, and local environment files
+- Mobile apps
+- Local environment files and generated artifacts
