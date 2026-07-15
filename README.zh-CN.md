@@ -8,9 +8,13 @@
 
 [English](README.md) | 简体中文
 
+<p align="center">
+  <img src="docs/assets/branding/social-preview.png" alt="山体滑坡监测桌面端" width="100%" />
+</p>
+
 一个面向山体滑坡监测、现场设备管理和预警业务的 Windows 桌面端项目。
 
-这个仓库只保留当前实际维护的桌面端：React/Vite 监测界面 + WPF/WebView2 原生 Windows 壳。Web 端、移动端、后端服务、部署基础设施、内部日志和私有环境配置没有进入这个公开仓库，目的是让项目边界更清晰，也更适合公开维护。
+这个仓库聚焦当前实际维护的桌面端：React/Vite 监测界面 + WPF/WebView2 原生 Windows 壳。早期 Web、移动端、后端和部署相关工作不放在这个公开桌面端仓库里，让项目更容易构建、审阅和持续维护。
 
 ## 项目定位
 
