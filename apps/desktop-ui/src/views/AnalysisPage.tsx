@@ -772,8 +772,9 @@ export function AnalysisPage() {
   }, []);
 
   const loadData = useCallback(
-    async (opts?: { silent?: boolean }) => {
+    async (opts?: { silent?: boolean; refreshTrends?: boolean }) => {
       const silent = opts?.silent ?? false;
+      const refreshTrends = opts?.refreshTrends ?? true;
       abortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
@@ -806,7 +807,7 @@ export function AnalysisPage() {
         setDeviceStates(nextStates);
         setFieldAlarmStatus(fieldAlarmResult);
         setLastUpdate(formatBeijingDateTime(new Date()));
-        setTrendRefreshSeq((value) => value + 1);
+        if (refreshTrends) setTrendRefreshSeq((value) => value + 1);
       } finally {
         if (!abort.signal.aborted) {
           setLoading(false);
@@ -826,9 +827,11 @@ export function AnalysisPage() {
 
   useEffect(() => {
     if (!autoRefresh) return;
+    let refreshCount = 0;
     const t = window.setInterval(() => {
-      void loadData({ silent: true });
-    }, 15000);
+      refreshCount += 1;
+      void loadData({ silent: true, refreshTrends: refreshCount % 3 === 0 });
+    }, 5000);
     return () => {
       window.clearInterval(t);
     };
@@ -1931,28 +1934,68 @@ export function AnalysisPage() {
       ? `${chartScopeLabel}姿态趋势（${realtimeTrendWindow.label}）`
       : `${chartScopeLabel}姿态实时剖面（倾角 X / 倾角 Y）`;
 
-  const rainfallOption = useMemo(() => {
-    const labels = rainfallTrend.map((point) => point.label);
-    const data = rainfallTrend.map((point) => point.value);
-
+  const dataFreshnessOption = useMemo(() => {
+    const rows = liveSnapshotRows
+      .map((row) => {
+        const updatedAt = dayjs(row.updatedAt);
+        const ageSeconds = updatedAt.isValid() ? Math.max(0, dayjs(now).diff(updatedAt, "second")) : 300;
+        return {
+          label: fieldNodeLegendLabel(row.device),
+          ageSeconds,
+          status: row.device.status
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const axisMax = Math.max(15, Math.ceil((Math.max(0, ...rows.map((row) => row.ageSeconds)) + 2) / 5) * 5);
     return {
       backgroundColor: "transparent",
       textStyle: { color: "rgba(226, 232, 240, 0.9)" },
-      grid: { left: "0%", right: "0%", top: 30, bottom: 0, containLabel: true },
+      grid: { left: "0%", right: 42, top: 20, bottom: 0, containLabel: true },
       tooltip: { trigger: "axis", ...darkTooltip() },
-      xAxis: { type: "category", data: labels, ...darkAxis() },
-      yAxis: { type: "value", ...darkAxis(), axisLabel: { ...darkAxis().axisLabel, margin: 6 } },
+      xAxis: {
+        type: "value",
+        min: 0,
+        max: axisMax,
+        name: "秒",
+        nameTextStyle: { color: "rgba(226, 232, 240, 0.72)" },
+        ...darkAxis(),
+        axisLabel: { ...darkAxis().axisLabel, margin: 6 }
+      },
+      yAxis: { type: "category", data: rows.map((row) => row.label), ...darkAxis() },
       series: [
         {
-          name: "雨量",
+          name: "距最后上报",
           type: "bar",
-          data,
-          itemStyle: { color: "rgba(34, 211, 238, 0.85)" },
-          barWidth: 14
+          data: rows.map((row) => ({
+            value: row.ageSeconds,
+            itemStyle: {
+              color:
+                row.status === "offline" || row.ageSeconds > 30
+                  ? "rgba(248, 113, 113, 0.88)"
+                  : row.ageSeconds > 10
+                    ? "rgba(251, 191, 36, 0.88)"
+                    : "rgba(45, 212, 191, 0.88)"
+            }
+          })),
+          barWidth: 16,
+          barMinHeight: 4,
+          label: {
+            show: true,
+            position: "right",
+            color: "rgba(226, 232, 240, 0.9)",
+            formatter: "{c}s"
+          },
+          markLine: {
+            silent: true,
+            symbol: "none",
+            lineStyle: { color: "rgba(251, 191, 36, 0.72)", type: "dashed" },
+            label: { color: "rgba(251, 191, 36, 0.92)", formatter: "10s 目标" },
+            data: [{ xAxis: 10 }]
+          }
         }
       ]
     };
-  }, [rainfallTrend]);
+  }, [liveSnapshotRows, now]);
 
   const riskDistributionOption = useMemo(() => {
     const riskRows = liveSnapshotRows.map((row) => analyzeAnomaly(row));
@@ -2901,8 +2944,8 @@ export function AnalysisPage() {
 
           <div className="desk-analysis-rightcol">
             <div className="desk-analysis-right-top">
-              <BaseCard title={`雨量趋势（${realtimeTrendWindow.label}，mm）`}>
-                <ReactECharts option={rainfallOption} style={{ height: "100%" }} />
+              <BaseCard title="各分节点数据新鲜度（距最后上报，秒）">
+                <ReactECharts option={dataFreshnessOption} style={{ height: "100%" }} />
               </BaseCard>
             </div>
 

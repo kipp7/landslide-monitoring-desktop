@@ -1,12 +1,16 @@
 import "leaflet/dist/leaflet.css";
 
 import L from "leaflet";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, Marker, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 
 import type { Station } from "../api/client";
 
 type BaseLayer = "2D" | "卫星图";
+type TileProvider = "tianditu" | "esri";
+
+const LEGACY_PUBLIC_TDT_KEY = "cc688e28c157fc3473807854c945f375";
+const TDT_TILE_ERROR_THRESHOLD = 4;
 
 export type StationMapMetrics = {
   deviceOnline: number;
@@ -119,10 +123,33 @@ function ClearSelectionOnMapClick(props: { onClear: () => void }) {
 }
 
 export function RealMapView(props: RealMapViewProps) {
-  const tdtKey = (import.meta.env.VITE_TDT_KEY as string | undefined) ?? "";
-  const useTdt = Boolean(tdtKey);
+  const configuredTdtKey = (import.meta.env.VITE_TDT_KEY as string | undefined)?.trim();
+  const tdtKey = configuredTdtKey || LEGACY_PUBLIC_TDT_KEY;
+  const [tileProvider, setTileProvider] = useState<TileProvider>("tianditu");
+  const tdtTileErrorCountRef = useRef(0);
+  const useTdt = Boolean(tdtKey) && tileProvider === "tianditu";
   const defaultLat = 24.43803;
   const defaultLng = 118.09631;
+
+  useEffect(() => {
+    tdtTileErrorCountRef.current = 0;
+    setTileProvider("tianditu");
+  }, [props.layer, props.resetKey, tdtKey]);
+
+  const tdtEventHandlers = useMemo(
+    () => ({
+      load: () => {
+        tdtTileErrorCountRef.current = 0;
+      },
+      tileerror: () => {
+        tdtTileErrorCountRef.current += 1;
+        if (tdtTileErrorCountRef.current >= TDT_TILE_ERROR_THRESHOLD) {
+          setTileProvider("esri");
+        }
+      }
+    }),
+    []
+  );
   const points = useMemo<RealMapPoint[]>(
     () =>
       props.points ??
@@ -227,8 +254,10 @@ export function RealMapView(props: RealMapViewProps) {
       {useTdt ? (
         <>
           <TileLayer
+            key={`tianditu-base-${tdtBaseLayer}`}
             url={tdtUrl(tdtBaseLayer)}
             attribution={tdtAttribution}
+            eventHandlers={tdtEventHandlers}
             subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
             maxZoom={18}
             maxNativeZoom={18}
@@ -236,8 +265,10 @@ export function RealMapView(props: RealMapViewProps) {
             updateWhenIdle
           />
           <TileLayer
+            key={`tianditu-label-${tdtLabelLayer}`}
             url={tdtUrl(tdtLabelLayer)}
             attribution={tdtAttribution}
+            eventHandlers={tdtEventHandlers}
             subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
             maxZoom={18}
             maxNativeZoom={18}
@@ -246,7 +277,15 @@ export function RealMapView(props: RealMapViewProps) {
           />
         </>
       ) : (
-        <TileLayer url={fallbackTile.url} attribution={fallbackTile.attribution} maxZoom={18} maxNativeZoom={18} detectRetina updateWhenIdle />
+        <TileLayer
+          key={`esri-${props.layer}`}
+          url={fallbackTile.url}
+          attribution={fallbackTile.attribution}
+          maxZoom={18}
+          maxNativeZoom={18}
+          detectRetina
+          updateWhenIdle
+        />
       )}
       <RemoveLeafletAttributionPrefix />
       <ResizeAndFitBounds bounds={bounds} />
