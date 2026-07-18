@@ -5,14 +5,13 @@ import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import type { AiPrediction, Device, DeviceStateSnapshot, FieldAlarmStatus, Station, TelemetrySeriesPoint } from "../api/client";
+import type { Device, DeviceStateSnapshot, FieldAlarmStatus, Station, TelemetrySeriesPoint } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { MapSwitchPanel, type MapType } from "../components/MapSwitchPanel";
 import { RealMapView } from "../components/RealMapView";
 import { StatusTag } from "../components/StatusTag";
 import { TerrainBackdrop } from "../components/TerrainBackdrop";
-import { baijiabaoReviewQueueSnapshot, type BaijiabaoReviewQueueItem } from "../data/baijiabaoReviewQueueSnapshot";
 import { useAuthStore } from "../stores/authStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { formatBeijingDate, formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
@@ -64,24 +63,6 @@ function readMetricBoolean(metrics: Record<string, unknown> | undefined, key: st
     return normalized === "true" || normalized === "1";
   }
   return false;
-}
-
-function riskLevelText(value: AiPrediction["riskLevel"]): string {
-  if (value === "high") return "高风险";
-  if (value === "medium") return "中风险";
-  if (value === "low") return "低风险";
-  return "未知";
-}
-
-function forecastHorizonText(value: string | null | undefined): string {
-  if (value === "24h") return "未来 24h";
-  if (value === "72h") return "未来 72h";
-  if (value && value.trim()) return `未来 ${value.trim()}`;
-  return "未来窗口";
-}
-
-function formatForecastDisplacementMm(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(3)} mm` : "暂无可用预测值";
 }
 
 function normalizeIdentityClass(value?: string | null): string {
@@ -211,171 +192,6 @@ function stationSnapshotLabel(stationName: string): string {
 function stationAreaLabel(station: Station): string {
   return station.area?.trim() || station.displayName?.trim() || station.stationName?.trim() || station.name;
 }
-
-function reviewSeverityLabel(value: BaijiabaoReviewQueueItem["severity"]): string {
-  if (value === "high") return "高优先";
-  if (value === "medium") return "中优先";
-  if (value === "needs-evidence") return "需证据";
-  return "低优先";
-}
-
-function reviewActionLabel(value: BaijiabaoReviewQueueItem["recommendedAction"]): string {
-  if (value === "prioritize-manual-review") return "优先人工复核";
-  if (value === "review-process-evidence") return "复核过程证据";
-  if (value === "review-label-window") return "复核标签窗口";
-  if (value === "request-raw-evidence") return "补查原始证据";
-  return "归档为对照";
-}
-
-function reviewClassLabel(value: BaijiabaoReviewQueueItem["autoReview"]["finalClass"]): string {
-  if (value === "true_pre_signal") return "强前兆候选";
-  if (value === "process_related") return "过程相关";
-  if (value === "label_boundary_artifact") return "标签边界";
-  if (value === "expected_noise") return "预期噪声";
-  return "证据不足";
-}
-
-function reviewSeverityColor(value: BaijiabaoReviewQueueItem["severity"]): string {
-  if (value === "high") return "red";
-  if (value === "medium") return "orange";
-  if (value === "needs-evidence") return "purple";
-  return "default";
-}
-
-function reviewUsefulLabel(value: BaijiabaoReviewQueueItem["autoReview"]["useful"]): string {
-  if (value === "yes") return "有复核价值";
-  if (value === "no") return "对照/噪声";
-  return "待补证据";
-}
-
-function reviewConfidenceLabel(value: BaijiabaoReviewQueueItem["autoReview"]["confidence"]): string {
-  if (value === "high") return "高";
-  if (value === "medium") return "中";
-  return "低";
-}
-
-function reviewDateLabel(value: string): string {
-  return dayjs(value).format("YYYY-MM-DD");
-}
-
-function csvCell(value: unknown): string {
-  const text = value == null ? "" : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function buildReviewQueueCsv(items: readonly BaijiabaoReviewQueueItem[]): string {
-  const headers = [
-    "queueItemId",
-    "sourceReviewItemId",
-    "pointId",
-    "priority",
-    "severity",
-    "severityLabel",
-    "recommendedAction",
-    "recommendedActionLabel",
-    "autoFinalClass",
-    "autoFinalClassLabel",
-    "autoUseful",
-    "autoConfidence",
-    "rawEvidenceNeeded",
-    "windowStart",
-    "windowEnd",
-    "durationDays",
-    "seasonSet",
-    "monthSet",
-    "evidenceRowCount",
-    "immediatePositiveDays",
-    "greyZoneDays",
-    "within30Days",
-    "isolatedDays",
-    "maxBoosterScore",
-    "classificationMix",
-    "autoRule",
-    "autoWarning",
-    "humanReviewStatus",
-    "humanFinalClass",
-    "humanUseful",
-    "humanConfidence",
-    "humanNotes"
-  ];
-
-  const rows = items.map((item) => [
-    item.queueItemId,
-    item.sourceReviewItemId,
-    item.pointId,
-    item.priority,
-    item.severity,
-    reviewSeverityLabel(item.severity),
-    item.recommendedAction,
-    reviewActionLabel(item.recommendedAction),
-    item.autoReview.finalClass,
-    reviewClassLabel(item.autoReview.finalClass),
-    item.autoReview.useful,
-    item.autoReview.confidence,
-    item.autoReview.rawEvidenceNeeded,
-    item.window.startTs,
-    item.window.endTs,
-    item.window.durationDays,
-    item.window.seasonSet,
-    item.window.monthSet,
-    item.evidenceSummary.evidenceRowCount,
-    item.evidenceSummary.immediatePositiveDays,
-    item.evidenceSummary.greyZoneDays,
-    item.evidenceSummary.within30Days,
-    item.evidenceSummary.isolatedDays,
-    item.evidenceSummary.maxBoosterScore,
-    item.evidenceSummary.classificationMix,
-    item.autoReview.rule,
-    item.autoReview.rawEvidenceNeeded === "yes" ? "需补查原始证据" : "机器证据较完整",
-    "pending",
-    "",
-    "",
-    "",
-    ""
-  ]);
-
-  return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
-}
-
-function buildReviewQueueEvidenceText(item: BaijiabaoReviewQueueItem): string {
-  return [
-    `reviewItem: ${item.sourceReviewItemId}`,
-    `point: ${item.pointId}`,
-    `priority: ${item.priority}`,
-    `severity: ${item.severity} (${reviewSeverityLabel(item.severity)})`,
-    `recommendedAction: ${item.recommendedAction} (${reviewActionLabel(item.recommendedAction)})`,
-    `window: ${reviewDateLabel(item.window.startTs)} to ${reviewDateLabel(item.window.endTs)} (${item.window.durationDays} days)`,
-    `season: ${item.window.seasonSet}; months: ${item.window.monthSet}`,
-    `evidenceRows: ${item.evidenceSummary.evidenceRowCount}`,
-    `evidenceCounts: immediate=${item.evidenceSummary.immediatePositiveDays}, greyZone=${item.evidenceSummary.greyZoneDays}, within30d=${item.evidenceSummary.within30Days}, isolated=${item.evidenceSummary.isolatedDays}`,
-    `classificationMix: ${item.evidenceSummary.classificationMix}`,
-    `maxBoosterScore: ${item.evidenceSummary.maxBoosterScore.toFixed(6)}`,
-    `autoReview: ${item.autoReview.finalClass} (${reviewClassLabel(item.autoReview.finalClass)}), useful=${item.autoReview.useful}, confidence=${item.autoReview.confidence}, rawEvidenceNeeded=${item.autoReview.rawEvidenceNeeded}`,
-    `rule: ${item.autoReview.rule}`,
-    `reviewNote: ${item.autoReview.rawEvidenceNeeded === "yes" ? "需补查原始证据" : "机器证据较完整"}`,
-    "boundary: REVIEW_ONLY; requires human confirmation before publishing."
-  ].join("\n");
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
-}
-
-type ReviewQueueSeverityFilter = "all" | BaijiabaoReviewQueueItem["severity"];
-type ReviewQueueActionFilter = "all" | BaijiabaoReviewQueueItem["recommendedAction"];
 
 type LiveSnapshotRow = {
   device: Device;
@@ -880,13 +696,6 @@ export function AnalysisPage() {
   const [stationPanelExpanded, setStationPanelExpanded] = useState(false);
   const [stationPanelPage, setStationPanelPage] = useState(0);
   const [stationPanelPlaying, setStationPanelPlaying] = useState(true);
-  const [reviewQueueSeverityFilter, setReviewQueueSeverityFilter] = useState<ReviewQueueSeverityFilter>("all");
-  const [reviewQueueActionFilter, setReviewQueueActionFilter] = useState<ReviewQueueActionFilter>("all");
-  const [reviewQueuePointFilter, setReviewQueuePointFilter] = useState<string>("all");
-  const [selectedReviewQueueId, setSelectedReviewQueueId] = useState<string | null>(
-    baijiabaoReviewQueueSnapshot.items[0]?.queueItemId ?? null
-  );
-  const [reviewQueueExportStatus, setReviewQueueExportStatus] = useState<string>("");
   const [rainfallTrend, setRainfallTrend] = useState<TimeBucketValue[]>([]);
   const [soilTrendGroups, setSoilTrendGroups] = useState<SoilTrendGroup[]>([]);
   const [soilTrendLoading, setSoilTrendLoading] = useState(false);
@@ -900,7 +709,6 @@ export function AnalysisPage() {
   const [realtimeTrendRange, setRealtimeTrendRange] = useState<RealtimeTrendRangeKey>("24h");
   const [historyTrendGroups, setHistoryTrendGroups] = useState<HistoryTrendGroup[]>([]);
   const [historyTrendLoading, setHistoryTrendLoading] = useState(false);
-  const [latestAiPrediction, setLatestAiPrediction] = useState<AiPrediction | null>(null);
   const [fieldAlarmStatus, setFieldAlarmStatus] = useState<FieldAlarmStatus | null>(null);
   const [trendRefreshSeq, setTrendRefreshSeq] = useState(0);
   const [fieldAlarmReviewOpen, setFieldAlarmReviewOpen] = useState(false);
@@ -939,10 +747,9 @@ export function AnalysisPage() {
       else setRefreshing(true);
 
       try {
-        const [s, d, predictionResult, fieldAlarmResult] = await Promise.all([
+        const [s, d, fieldAlarmResult] = await Promise.all([
           api.stations.list(),
           api.devices.list(),
-          api.aiPredictions.list({ page: 1, pageSize: 1 }).catch(() => null),
           api.fieldAlarm.getStatus().catch(() => null)
         ]);
         if (abort.signal.aborted) return;
@@ -962,7 +769,6 @@ export function AnalysisPage() {
         setStations(formalStations);
         setDevices(formalDevices);
         setDeviceStates(nextStates);
-        setLatestAiPrediction(predictionResult?.list[0] ?? null);
         setFieldAlarmStatus(fieldAlarmResult);
         setLastUpdate(formatBeijingDateTime(new Date()));
         setTrendRefreshSeq((value) => value + 1);
@@ -1049,6 +855,15 @@ export function AnalysisPage() {
 
     return scopeOptions;
   }, [stations]);
+
+  const areaNodeCountByKey = useMemo(() => {
+    return new Map(
+      areaOptions.map((option) => {
+        const stationIds = new Set(option.stationIds);
+        return [option.key, devices.filter((device) => stationIds.has(device.stationId)).length] as const;
+      })
+    );
+  }, [areaOptions, devices]);
 
   useEffect(() => {
     if (!areaOptions.length) {
@@ -1460,13 +1275,13 @@ export function AnalysisPage() {
     const warn = visibleDevices.filter((d) => d.status === "warning").length;
     const offline = visibleDevices.filter((d) => d.status === "offline").length;
     return {
-      stations: visibleStations.length,
+      nodes: visibleDevices.length,
       devices: visibleDevices.length,
       online,
       warn,
       offline
     };
-  }, [visibleDevices, visibleStations.length]);
+  }, [visibleDevices]);
 
   const chartBase = useMemo(() => {
     return {
@@ -2108,10 +1923,11 @@ export function AnalysisPage() {
   }, [rainfallTrend]);
 
   const riskDistributionOption = useMemo(() => {
-    const high = visibleStations.filter((s) => s.risk === "high").length;
-    const mid = visibleStations.filter((s) => s.risk === "mid").length;
-    const low = visibleStations.filter((s) => s.risk === "low").length;
-    const total = visibleStations.length;
+    const riskRows = liveSnapshotRows.map((row) => analyzeAnomaly(row));
+    const high = riskRows.filter((analysis) => analysis.level === "critical").length;
+    const mid = riskRows.filter((analysis) => analysis.level === "warn").length;
+    const low = riskRows.filter((analysis) => analysis.level === "info").length;
+    const total = liveSnapshotRows.length;
 
     return {
       backgroundColor: "transparent",
@@ -2148,7 +1964,7 @@ export function AnalysisPage() {
         }
       ]
     };
-  }, [visibleStations]);
+  }, [liveSnapshotRows]);
 
   const anomalyDetails = useMemo(
     () =>
@@ -2187,11 +2003,16 @@ export function AnalysisPage() {
     };
   }, [rainfallTrend]);
 
-  const freshDeviceCount = useMemo(
-    () => liveSnapshotRows.filter((row) => dayjs().diff(dayjs(row.updatedAt), "minute") <= 15).length,
+  const freshSnapshotRows = useMemo(
+    () => liveSnapshotRows.filter((row) => dayjs().diff(dayjs(row.updatedAt), "minute") <= 15),
     [liveSnapshotRows]
   );
+  const freshDeviceCount = freshSnapshotRows.length;
   const staleDeviceCount = Math.max(0, visibleDevices.length - freshDeviceCount);
+  const batteryReportingCount = useMemo(
+    () => liveSnapshotRows.filter((row) => row.batteryPct != null).length,
+    [liveSnapshotRows]
+  );
   const lowBatteryCount = useMemo(
     () => liveSnapshotRows.filter((row) => row.batteryPct != null && row.batteryPct <= 20).length,
     [liveSnapshotRows]
@@ -2206,15 +2027,41 @@ export function AnalysisPage() {
   );
 
   const sensorTypeOption = useMemo(() => {
-    const typeOrder: Device["type"][] = ["gnss", "rain", "tilt", "temp_hum", "camera"];
     const abnormalIds = new Set(anomalyDetails.map((entry) => entry.row.device.id));
-    const items = typeOrder
-      .map((type) => {
-        const typed = visibleDevices.filter((device) => device.type === type);
+    const categories: Array<{ label: string; matches: (device: Device) => boolean }> = [
+      {
+        label: "土壤温湿度",
+        matches: (device) => isSoilSensorDevice(device, deviceStates[device.id])
+      },
+      {
+        label: "倾角",
+        matches: (device) => isTiltSensorDevice(device, deviceStates[device.id])
+      },
+      {
+        label: "土壤电导率",
+        matches: (device) =>
+          readMetricNumber(deviceStates[device.id]?.metrics, "electrical_conductivity_us_cm") != null
+      },
+      {
+        label: "GNSS",
+        matches: (device) => {
+          const metrics = deviceStates[device.id]?.metrics;
+          return (
+            readMetricNumber(metrics, "gps_latitude") != null ||
+            readMetricNumber(metrics, "gps_longitude") != null ||
+            readMetricNumber(metrics, "latitude") != null ||
+            readMetricNumber(metrics, "longitude") != null
+          );
+        }
+      }
+    ];
+    const items = categories
+      .map((category) => {
+        const matched = visibleDevices.filter(category.matches);
         return {
-          label: deviceTypeLabel(type),
-          total: typed.length,
-          abnormal: typed.filter((device) => abnormalIds.has(device.id)).length
+          label: category.label,
+          total: matched.length,
+          abnormal: matched.filter((device) => abnormalIds.has(device.id)).length
         };
       })
       .filter((item) => item.total > 0);
@@ -2255,13 +2102,29 @@ export function AnalysisPage() {
         }
       ]
     };
-  }, [anomalyDetails, visibleDevices]);
+  }, [anomalyDetails, deviceStates, visibleDevices]);
+
+  const freshSoilReadings = useMemo(() => {
+    return freshSnapshotRows
+      .filter((row) => row.soilTemperatureC != null || row.soilMoisturePct != null)
+      .map((row) => {
+        const temperature = row.soilTemperatureC == null ? "温度未上报" : `${row.soilTemperatureC.toFixed(1)}°C`;
+        const moisture = row.soilMoisturePct == null ? "水分未上报" : `${row.soilMoisturePct.toFixed(1)}%`;
+        return `${fieldNodeLegendLabel(row.device)} ${temperature} / ${moisture}`;
+      });
+  }, [freshSnapshotRows]);
+
+  const rainDeviceCount = useMemo(
+    () => visibleDevices.filter((device) => device.type === "rain").length,
+    [visibleDevices]
+  );
+  const warningCount = anomalyDetails.filter((entry) => entry.analysis.level === "warn").length;
 
   const operationalSummary = useMemo(() => {
     if (!visibleDevices.length) {
       return [
         "当前没有设备接入，未归档数据不会显示在当前视图。",
-        "设备接入后，大屏将展示真实站点、异常与雨量统计。"
+        "设备接入后，大屏仅展示实时设备状态和实测传感器数据。"
       ];
     }
     const topAnomaly = anomalies[0];
@@ -2276,35 +2139,19 @@ export function AnalysisPage() {
       }, null);
 
     const summary = [
-      `当前${activeArea ? scopeLevelLabel(activeArea.level) : "范围"} ${activeArea?.label ?? "未选择"}，分节点 ${visibleStations.length} 个，设备 ${visibleDevices.length} 台，在线 ${stats.online} 台，离线 ${stats.offline} 台。`,
-      `${realtimeTrendWindow.label}累计雨量 ${rainfallSummary.total.toFixed(2)} mm。`,
-      `低电量 ${lowBatteryCount} 台，已触发预警 ${warningFlagCount} 台，姿态超阈 ${tiltAlertCount} 台。`,
+      `当前${activeArea ? scopeLevelLabel(activeArea.level) : "范围"} ${activeArea?.label ?? "未选择"}，分节点 ${stats.nodes} 个，在线 ${stats.online} 个，异常 ${warningCount} 个，离线 ${stats.offline} 个。`,
+      `数据新鲜度：15 分钟内上报 ${freshDeviceCount} 个，超时未更新 ${staleDeviceCount} 个。`,
+      freshSoilReadings.length ? `土壤实测：${freshSoilReadings.join("；")}。` : "当前没有 15 分钟内的新鲜土壤实测数据。",
+      rainDeviceCount > 0
+        ? `${realtimeTrendWindow.label}累计雨量 ${rainfallSummary.total.toFixed(2)} mm。`
+        : "当前未接入雨量传感器，不生成雨量数值。",
+      `${batteryReportingCount > 0 ? `低电量 ${lowBatteryCount} 个` : "电量指标未接入"}，已触发预警 ${warningFlagCount} 个，姿态超阈 ${tiltAlertCount} 个。`,
       topAnomaly
         ? `优先处置：${topAnomaly.deviceName}，${topAnomaly.message}。`
         : strongestTilt
           ? `当前未检出异常，姿态最大设备为 ${strongestTilt.deviceName}，最大倾角 ${strongestTilt.magnitude.toFixed(2)}°。`
           : "当前未检出设备异常。"
     ];
-    if (latestAiPrediction?.riskCalibration) {
-      const calibration = latestAiPrediction.riskCalibration;
-      const threshold = calibration.threshold == null ? "—" : calibration.threshold.toFixed(6);
-      const over = calibration.scoreOverThreshold == null ? "—" : `${calibration.scoreOverThreshold.toFixed(2)}x`;
-      summary.push(
-        `区域专家模型：${riskLevelText(latestAiPrediction.riskLevel)}，score=${latestAiPrediction.riskScore.toFixed(4)}，阈值=${threshold}，越阈=${over}。`
-      );
-    } else if (latestAiPrediction) {
-      summary.push(
-        `区域专家模型：${riskLevelText(latestAiPrediction.riskLevel)}，score=${latestAiPrediction.riskScore.toFixed(4)}，暂无校准阈值。`
-      );
-    }
-    if (latestAiPrediction?.forecastInference) {
-      const forecast = latestAiPrediction.forecastInference;
-      summary.push(
-        `形变预测模型：${forecastHorizonText(forecast.horizonSpec)} 形变增量 ${formatForecastDisplacementMm(
-          forecast.predictedDisplacementMm
-        )}，模型 ${forecast.modelVersion ?? forecast.modelKey ?? "forecast"}。`
-      );
-    }
     if (fieldAlarmStatus?.active) {
       summary.unshift(
         `现场声光报警已触发：${fieldAlarmStatus.latestAlert?.title || "RK3568 声光报警器处于动作状态"}，请先人工复核现场。`
@@ -2313,84 +2160,12 @@ export function AnalysisPage() {
       summary.unshift("现场声光报警已静音，事件仍处于人工复核窗口。");
     }
     return summary;
-  }, [activeArea, anomalies, fieldAlarmStatus, latestAiPrediction, liveSnapshotRows, lowBatteryCount, rainfallSummary, realtimeTrendWindow.label, stats.offline, stats.online, tiltAlertCount, visibleDevices.length, visibleStations.length, warningFlagCount]);
+  }, [activeArea, anomalies, batteryReportingCount, fieldAlarmStatus, freshDeviceCount, freshSoilReadings, liveSnapshotRows, lowBatteryCount, rainDeviceCount, rainfallSummary.total, realtimeTrendWindow.label, staleDeviceCount, stats.nodes, stats.offline, stats.online, tiltAlertCount, visibleDevices.length, warningCount, warningFlagCount]);
 
-  const warningCount = anomalyDetails.filter((entry) => entry.analysis.level === "warn").length;
   const physicalAlarmActive = fieldAlarmStatus?.active ?? false;
   const hasOffline = stats.offline > 0;
   const hasCritical = physicalAlarmActive;
   const hasWarn = warningCount > 0;
-  const reviewQueueUsefulRatio = baijiabaoReviewQueueSnapshot.sourceSummary.reviewPrecision;
-  const reviewQueueWinterRatio = baijiabaoReviewQueueSnapshot.sourceSummary.winterUsefulRatio;
-  const reviewQueueSeverityOptions = useMemo(
-    () => ["all", ...baijiabaoReviewQueueSnapshot.summary.bySeverity.map((entry) => entry.key)] as ReviewQueueSeverityFilter[],
-    []
-  );
-  const reviewQueueActionOptions = useMemo(
-    () => ["all", ...baijiabaoReviewQueueSnapshot.summary.byRecommendedAction.map((entry) => entry.key)] as ReviewQueueActionFilter[],
-    []
-  );
-  const reviewQueuePointOptions = useMemo(
-    () => ["all", ...baijiabaoReviewQueueSnapshot.summary.byPoint.map((entry) => entry.key)],
-    []
-  );
-  const reviewQueueFilteredItems = useMemo(() => {
-    return baijiabaoReviewQueueSnapshot.items.filter((item) => {
-      if (reviewQueueSeverityFilter !== "all" && item.severity !== reviewQueueSeverityFilter) return false;
-      if (reviewQueueActionFilter !== "all" && item.recommendedAction !== reviewQueueActionFilter) return false;
-      if (reviewQueuePointFilter !== "all" && item.pointId !== reviewQueuePointFilter) return false;
-      return true;
-    });
-  }, [reviewQueueActionFilter, reviewQueuePointFilter, reviewQueueSeverityFilter]);
-  const selectedReviewQueueItem = useMemo(() => {
-    return (
-      reviewQueueFilteredItems.find((item) => item.queueItemId === selectedReviewQueueId) ??
-      reviewQueueFilteredItems[0] ??
-      null
-    );
-  }, [reviewQueueFilteredItems, selectedReviewQueueId]);
-  const reviewQueueFilterActive =
-    reviewQueueSeverityFilter !== "all" || reviewQueueActionFilter !== "all" || reviewQueuePointFilter !== "all";
-  const clearReviewQueueFilters = useCallback(() => {
-    setReviewQueueSeverityFilter("all");
-    setReviewQueueActionFilter("all");
-    setReviewQueuePointFilter("all");
-  }, []);
-  const showReviewQueueExportStatus = useCallback((message: string) => {
-    setReviewQueueExportStatus(message);
-    window.setTimeout(() => setReviewQueueExportStatus(""), 3200);
-  }, []);
-  const downloadReviewQueueCsv = useCallback(() => {
-    if (!reviewQueueFilteredItems.length) {
-      showReviewQueueExportStatus("当前筛选没有可导出的队列项。");
-      return;
-    }
-    const csv = `\uFEFF${buildReviewQueueCsv(reviewQueueFilteredItems)}`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const stamp = dayjs().format("YYYYMMDD-HHmmss");
-    a.href = url;
-    a.download = `baijiabao-review-queue-filtered-${stamp}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showReviewQueueExportStatus(`已导出 ${reviewQueueFilteredItems.length} 条筛选结果。`);
-  }, [reviewQueueFilteredItems, showReviewQueueExportStatus]);
-  const copySelectedReviewQueueEvidence = useCallback(() => {
-    if (!selectedReviewQueueItem) {
-      showReviewQueueExportStatus("当前没有选中的复核项。");
-      return;
-    }
-    void copyTextToClipboard(buildReviewQueueEvidenceText(selectedReviewQueueItem))
-      .then(() => {
-        showReviewQueueExportStatus(`已复制 ${selectedReviewQueueItem.sourceReviewItemId} 的证据摘要。`);
-      })
-      .catch(() => {
-        showReviewQueueExportStatus("复制失败，当前宿主可能禁用了剪贴板。");
-      });
-  }, [selectedReviewQueueItem, showReviewQueueExportStatus]);
 
   const fieldAlarmAlertId = fieldAlarmStatus?.latestAlert?.alertId;
   const fieldAlarmLastEventAt = fieldAlarmStatus?.latestAlert?.lastEventAt;
@@ -2562,8 +2337,8 @@ export function AnalysisPage() {
                 value: option.key,
                 label:
                   option.level === "all"
-                    ? `${option.label} · ${option.stationIds.length} 分节点`
-                    : `${scopeLevelLabel(option.level)}：${option.label} · ${option.stationIds.length} 分节点`
+                    ? `${option.label} · ${areaNodeCountByKey.get(option.key) ?? 0} 分节点`
+                    : `${scopeLevelLabel(option.level)}：${option.label} · ${areaNodeCountByKey.get(option.key) ?? 0} 分节点`
               }))}
             />
           </div>
@@ -2578,7 +2353,7 @@ export function AnalysisPage() {
             />
           </div>
           <div className="desk-analysis-meta-group">
-            <Tag color="cyan">分节点 {stats.stations}</Tag>
+            <Tag color="cyan">分节点 {stats.nodes}</Tag>
             <Tag color="green">在线 {stats.online}</Tag>
             <Tag color={hasWarn ? "orange" : "blue"}>异常 {warningCount}</Tag>
             <Tag color={hasOffline ? "red" : "blue"}>离线 {stats.offline}</Tag>
@@ -3078,185 +2853,6 @@ export function AnalysisPage() {
                       <span>{line}</span>
                     </div>
                   ))}
-                  <div className="desk-review-queue">
-                    <div className="desk-review-queue-head">
-                      <div>
-                        <div className="desk-review-queue-title">AI 离线复核队列</div>
-                        <div className="desk-review-queue-subtitle">白家堡 Batch-1 模型复核候选队列</div>
-                      </div>
-                      <div className="desk-review-queue-head-actions">
-                        <Tag color={baijiabaoReviewQueueSnapshot.productGate.reviewOnlyWorkflowCandidate ? "green" : "orange"}>
-                          {baijiabaoReviewQueueSnapshot.productGate.reviewOnlyWorkflowCandidate ? "可进入复核流" : "待验证"}
-                        </Tag>
-                        <Button size="small" onClick={downloadReviewQueueCsv}>
-                          导出CSV
-                        </Button>
-                        <Button size="small" onClick={copySelectedReviewQueueEvidence}>
-                          复制证据
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="desk-review-queue-metrics">
-                      <div>
-                        <span className="k">队列</span>
-                        <span className="v">{baijiabaoReviewQueueSnapshot.summary.itemCount}</span>
-                      </div>
-                      <div>
-                        <span className="k">复核有效率</span>
-                        <span className="v">{(reviewQueueUsefulRatio * 100).toFixed(1)}%</span>
-                      </div>
-                      <div>
-                        <span className="k">winter useful</span>
-                        <span className="v">{(reviewQueueWinterRatio * 100).toFixed(1)}%</span>
-                      </div>
-                    </div>
-                    <div className="desk-review-queue-filters">
-                      <div className="desk-review-queue-filter-group" aria-label="复核优先级筛选">
-                        {reviewQueueSeverityOptions.map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            className={clsx("desk-review-queue-filter", reviewQueueSeverityFilter === value && "is-active")}
-                            onClick={() => setReviewQueueSeverityFilter(value)}
-                          >
-                            {value === "all" ? "全部优先级" : reviewSeverityLabel(value)}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="desk-review-queue-filter-group" aria-label="复核点位筛选">
-                        {reviewQueuePointOptions.map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            className={clsx("desk-review-queue-filter", reviewQueuePointFilter === value && "is-active")}
-                            onClick={() => setReviewQueuePointFilter(value)}
-                          >
-                            {value === "all" ? "全部点位" : value}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="desk-review-queue-action-filters" aria-label="复核动作筛选">
-                      {reviewQueueActionOptions.map((value) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={clsx("desk-review-queue-filter", reviewQueueActionFilter === value && "is-active")}
-                          onClick={() => setReviewQueueActionFilter(value)}
-                        >
-                          {value === "all" ? "全部动作" : reviewActionLabel(value)}
-                        </button>
-                      ))}
-                      {reviewQueueFilterActive ? (
-                        <button type="button" className="desk-review-queue-filter is-reset" onClick={clearReviewQueueFilters}>
-                          重置筛选
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="desk-review-queue-workbench">
-                      <div className="desk-review-queue-list">
-                        {reviewQueueFilteredItems.length ? (
-                          reviewQueueFilteredItems.map((item) => (
-                            <button
-                              key={item.queueItemId}
-                              type="button"
-                              className={clsx(
-                                "desk-review-queue-item",
-                                selectedReviewQueueItem?.queueItemId === item.queueItemId && "is-selected"
-                              )}
-                              onClick={() => setSelectedReviewQueueId(item.queueItemId)}
-                            >
-                              <div className="desk-review-queue-item-main">
-                                <span className="desk-review-queue-priority">#{item.priority}</span>
-                                <span className="desk-review-queue-point">{item.pointId}</span>
-                                <Tag color={reviewSeverityColor(item.severity)}>{reviewSeverityLabel(item.severity)}</Tag>
-                              </div>
-                              <div className="desk-review-queue-item-meta">
-                                <span>{reviewActionLabel(item.recommendedAction)}</span>
-                                <span>{reviewClassLabel(item.autoReview.finalClass)}</span>
-                                <span>{reviewDateLabel(item.window.startTs)} 至 {reviewDateLabel(item.window.endTs)}</span>
-                                <span>{item.window.durationDays} 天</span>
-                              </div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="desk-review-queue-empty">
-                            当前筛选无队列项。{reviewQueueFilterActive ? "可重置筛选查看全部候选。" : ""}
-                          </div>
-                        )}
-                      </div>
-                      {selectedReviewQueueItem ? (
-                        <div className="desk-review-queue-detail">
-                          <div className="desk-review-queue-detail-head">
-                            <div>
-                              <div className="desk-review-queue-detail-title">
-                                #{selectedReviewQueueItem.priority} {selectedReviewQueueItem.pointId}
-                              </div>
-                              <div className="desk-review-queue-detail-subtitle">
-                                {selectedReviewQueueItem.sourceReviewItemId} · {selectedReviewQueueItem.window.seasonSet}
-                              </div>
-                            </div>
-                            <Tag color={selectedReviewQueueItem.autoReview.useful === "yes" ? "green" : selectedReviewQueueItem.autoReview.useful === "no" ? "default" : "purple"}>
-                              {reviewUsefulLabel(selectedReviewQueueItem.autoReview.useful)}
-                            </Tag>
-                          </div>
-                          <div className="desk-review-queue-detail-grid">
-                            <div>
-                              <span>窗口</span>
-                              <strong>
-                                {reviewDateLabel(selectedReviewQueueItem.window.startTs)} 至 {reviewDateLabel(selectedReviewQueueItem.window.endTs)}
-                              </strong>
-                            </div>
-                            <div>
-                              <span>证据行</span>
-                              <strong>{selectedReviewQueueItem.evidenceSummary.evidenceRowCount}</strong>
-                            </div>
-                            <div>
-                              <span>immediate</span>
-                              <strong>{selectedReviewQueueItem.evidenceSummary.immediatePositiveDays}</strong>
-                            </div>
-                            <div>
-                              <span>grey zone</span>
-                              <strong>{selectedReviewQueueItem.evidenceSummary.greyZoneDays}</strong>
-                            </div>
-                            <div>
-                              <span>within 30d</span>
-                              <strong>{selectedReviewQueueItem.evidenceSummary.within30Days}</strong>
-                            </div>
-                            <div>
-                              <span>isolated</span>
-                              <strong>{selectedReviewQueueItem.evidenceSummary.isolatedDays}</strong>
-                            </div>
-                          </div>
-                          <div className="desk-review-queue-detail-line">
-                            <span>推荐动作</span>
-                            <strong>{reviewActionLabel(selectedReviewQueueItem.recommendedAction)}</strong>
-                          </div>
-                          <div className="desk-review-queue-detail-line">
-                            <span>自动分类</span>
-                            <strong>{reviewClassLabel(selectedReviewQueueItem.autoReview.finalClass)} · 置信度 {reviewConfidenceLabel(selectedReviewQueueItem.autoReview.confidence)}</strong>
-                          </div>
-                          <div className="desk-review-queue-detail-line">
-                            <span>规则</span>
-                            <strong>{selectedReviewQueueItem.autoReview.rule}</strong>
-                          </div>
-                          <div className="desk-review-queue-detail-line">
-                            <span>证据混合</span>
-                            <strong>{selectedReviewQueueItem.evidenceSummary.classificationMix}</strong>
-                          </div>
-                          <div className="desk-review-queue-detail-line">
-                            <span>booster max</span>
-                            <strong>{selectedReviewQueueItem.evidenceSummary.maxBoosterScore.toFixed(4)}</strong>
-                          </div>
-                          <div className="desk-review-queue-detail-warning">
-                            {selectedReviewQueueItem.autoReview.rawEvidenceNeeded === "yes"
-                              ? "需要补查原始证据。"
-                              : "当前机器证据较完整。"}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
                 </div>
               </BaseCard>
             </div>
@@ -3284,9 +2880,9 @@ export function AnalysisPage() {
                       </span>
                     </div>
                     <div className="desk-sensor-item">
-                      <span className="desk-sensor-label">低电量</span>
+                      <span className="desk-sensor-label">{batteryReportingCount > 0 ? "低电量" : "电量未上报"}</span>
                       <span className="desk-sensor-value" style={{ color: "#f59e0b" }}>
-                        {String(lowBatteryCount)}
+                        {batteryReportingCount > 0 ? String(lowBatteryCount) : "—"}
                       </span>
                     </div>
                     <div className="desk-sensor-item">
