@@ -74,6 +74,36 @@ if (-not $webIndex -or -not (Test-Path $webIndex)) {
   throw "Windows packaged web assets missing: $webIndex"
 }
 
+$apiConfigExpected = $manifest.api -and $manifest.api.configured -eq $true
+$apiConfigVerified = -not $apiConfigExpected
+$runtimeApiVerified = -not $apiConfigExpected
+$expectedApiBaseUrl = if ($apiConfigExpected) { ([string]$manifest.api.baseUrl).Trim().TrimEnd("/") } else { $null }
+$expectedApiMode = if ($apiConfigExpected) { [string]$manifest.api.mode } else { $null }
+$expectedApiProfile = if ($apiConfigExpected) { [string]$manifest.api.profile } else { $null }
+$expectedApiForce = $apiConfigExpected -and $manifest.api.force -eq $true
+
+if ($apiConfigExpected) {
+  $runtimeConfigPath = [string]$manifest.api.configPath
+  if (-not $runtimeConfigPath -or -not (Test-Path $runtimeConfigPath)) {
+    throw "Windows packaged runtime config missing: $runtimeConfigPath"
+  }
+
+  $runtimeConfig = Get-Content -Path $runtimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  $actualApiBaseUrl = ([string]$runtimeConfig.api.baseUrl).Trim().TrimEnd("/")
+  $actualApiMode = [string]$runtimeConfig.api.mode
+  $actualApiProfile = [string]$runtimeConfig.profile
+  $actualApiForce = $runtimeConfig.api.force -eq $true
+  $apiConfigVerified =
+    $actualApiBaseUrl -eq $expectedApiBaseUrl -and
+    $actualApiMode -eq $expectedApiMode -and
+    $actualApiProfile -eq $expectedApiProfile -and
+    $actualApiForce -eq $expectedApiForce
+
+  if (-not $apiConfigVerified) {
+    throw "Windows packaged runtime config does not match its package manifest"
+  }
+}
+
 $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
   $_.Name -in @("LandslideDesk.Win.exe", "dotnet.exe") -and $_.CommandLine -like "*LandslideDesk.Win*"
 }
@@ -104,6 +134,11 @@ if ($ready -and $PostReadyQuietSeconds -gt 0) {
   Start-Sleep -Seconds $PostReadyQuietSeconds
 }
 $runtimeErrorInfo = Get-DeskRuntimeErrorInfo -LogPath $runtimeLog
+if ($apiConfigExpected -and (Test-Path $runtimeLog)) {
+  $runtimeContent = Get-Content -Path $runtimeLog -Raw -ErrorAction SilentlyContinue
+  $expectedApiLine = "Host API mode=$expectedApiMode baseUrl=$expectedApiBaseUrl force=$expectedApiForce profile=$expectedApiProfile"
+  $runtimeApiVerified = $runtimeContent.Contains($expectedApiLine)
+}
 
 $stopped = $false
 try {
@@ -126,6 +161,10 @@ $result = [ordered]@{
   postReadyQuietSeconds = $PostReadyQuietSeconds
   runtimeErrorCount = $runtimeErrorInfo.count
   runtimeErrorSample = @($runtimeErrorInfo.sample)
+  apiConfigExpected = $apiConfigExpected
+  apiConfigVerified = $apiConfigVerified
+  runtimeApiVerified = $runtimeApiVerified
+  expectedApiBaseUrl = $expectedApiBaseUrl
   stoppedAfterVerify = $stopped
   runtimeLog = $runtimeLog
 }
@@ -147,6 +186,10 @@ if (-not $ready) {
 
 if ($runtimeErrorInfo.count -gt 0) {
   throw "Windows packaged exe reported frontend runtime errors during verification"
+}
+
+if (-not $apiConfigVerified -or -not $runtimeApiVerified) {
+  throw "Windows packaged API runtime configuration verification failed"
 }
 
 $json
