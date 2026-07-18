@@ -112,17 +112,18 @@ export type StationManagementStation = {
   description: string;
   chartLegendName: string;
   riskLevel: RiskLevel;
+  riskConfigured?: boolean;
   status: OnlineStatus;
   lat: number;
   lng: number;
   altitude?: number;
   deviceCount: number;
   sensorTypes: DeviceType[];
-  lastDataTime: string;
+  lastDataTime: string | null;
   updatedAt?: string;
 };
 
-export type DeviceType = "gnss" | "rain" | "tilt" | "temp_hum" | "camera" | "field_gateway";
+export type DeviceType = "gnss" | "multi_sensor" | "rain" | "tilt" | "temp_hum" | "camera" | "field_gateway";
 
 export type Device = {
   id: string;

@@ -296,12 +296,13 @@ function normalizeSensorTypes(value: unknown): DeviceType[] {
   const normalized = value
     .map((item) => (typeof item === "string" ? item.trim().toLowerCase() : ""))
     .map((item): DeviceType | null => {
-      if (item === "gnss" || item === "gps" || item === "multi_sensor" || item === "multisensor")
-        return "gnss";
+      if (item === "gnss" || item === "gps") return "gnss";
+      if (item === "multi_sensor" || item === "multisensor") return "multi_sensor";
       if (item === "rain" || item === "rainfall") return "rain";
       if (item === "tilt" || item === "inclinometer") return "tilt";
       if (item === "camera" || item === "video") return "camera";
       if (item === "temp_hum" || item === "temperature" || item === "humidity") return "temp_hum";
+      if (item === "field_gateway" || item === "gateway") return "field_gateway";
       return null;
     })
     .filter((item): item is DeviceType => item !== null);
@@ -342,7 +343,7 @@ function mapStationManagementFromV1(
           .map((device) => (typeof device.lastSeenAt === "string" ? device.lastSeenAt : ""))
           .filter((value) => value)
           .sort()
-          .at(-1) ?? new Date().toISOString();
+          .at(-1) ?? null;
       const displayName =
         readNullableString(station.displayName) ??
         readNullableString((metadata as Record<string, unknown>).displayName) ??
@@ -360,6 +361,10 @@ function mapStationManagementFromV1(
         readNullableString(station.lifecycleStatus) ??
         readNullableString((metadata as Record<string, unknown>).lifecycleStatus) ??
         readNullableString((metadata as Record<string, unknown>).lifecycle_status);
+      const riskValue =
+        (metadata as Record<string, unknown>).riskLevel ??
+        (metadata as Record<string, unknown>).risk_level;
+      const normalizedRiskValue = typeof riskValue === "string" ? riskValue.trim().toLowerCase() : "";
 
       return {
         stationId: station.stationId,
@@ -386,9 +391,9 @@ function mapStationManagementFromV1(
               ? ((metadata as Record<string, unknown>).chart_legend_name as string)
               : displayName,
         riskLevel: normalizeManagementRisk(
-          (metadata as Record<string, unknown>).riskLevel ??
-            (metadata as Record<string, unknown>).risk_level
+          riskValue
         ),
+        riskConfigured: ["low", "mid", "medium", "high"].includes(normalizedRiskValue),
         status: normalizeManagementStatus(station.status),
         lat: typeof station.latitude === "number" ? station.latitude : 0,
         lng: typeof station.longitude === "number" ? station.longitude : 0,

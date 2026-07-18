@@ -598,6 +598,229 @@
   text-align: right;
 }
 
+.desk-dm-live-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.desk-dm-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.42);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.desk-dm-summary-strip > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.desk-dm-summary-strip > div:last-child {
+  border-right: 0;
+}
+
+.desk-dm-summary-strip span,
+.desk-dm-device-facts span,
+.desk-dm-alarm-status span {
+  color: rgba(148, 163, 184, 0.92);
+  font-size: 12px;
+}
+
+.desk-dm-summary-strip strong {
+  color: rgba(226, 232, 240, 0.96);
+  font-size: 18px;
+}
+
+.desk-dm-summary-strip strong.is-online {
+  color: #4ade80;
+}
+
+.desk-dm-summary-strip strong.is-warning {
+  color: #fbbf24;
+}
+
+.desk-dm-live-top {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(520px, 1.75fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.desk-dm-live-top > .ant-card,
+.desk-dm-live-bottom > .ant-card,
+.desk-dm-control-stack > .ant-card {
+  min-width: 0;
+}
+
+.desk-dm-device-list-card .ant-card-body {
+  max-height: 430px;
+  overflow: auto;
+}
+
+.desk-dm-dot.is-online {
+  background: #4ade80;
+}
+
+.desk-dm-dot.is-warning {
+  background: #fbbf24;
+}
+
+.desk-dm-dot.is-offline {
+  background: #94a3b8;
+}
+
+.desk-dm-live-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.desk-dm-live-metric {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: rgba(2, 6, 23, 0.22);
+  border-radius: 6px;
+}
+
+.desk-dm-live-metric span {
+  display: block;
+  color: rgba(148, 163, 184, 0.92);
+  font-size: 12px;
+}
+
+.desk-dm-live-metric strong {
+  display: block;
+  margin-top: 5px;
+  color: rgba(226, 232, 240, 0.97);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.desk-dm-device-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+  margin-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 6px;
+}
+
+.desk-dm-device-facts > div,
+.desk-dm-alarm-status > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 0;
+}
+
+.desk-dm-device-facts strong,
+.desk-dm-alarm-status strong {
+  min-width: 0;
+  color: rgba(226, 232, 240, 0.94);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.desk-dm-actuator-detail {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border-left: 2px solid rgba(34, 211, 238, 0.55);
+  background: rgba(2, 6, 23, 0.22);
+  color: rgba(203, 213, 225, 0.9);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.desk-dm-live-bottom {
+  display: grid;
+  grid-template-columns: minmax(640px, 1.8fr) minmax(380px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.desk-dm-control-stack {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.desk-dm-command-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.desk-dm-command-history {
+  max-height: 285px;
+  overflow: auto;
+}
+
+@media (max-width: 1380px) {
+  .desk-dm-live-top {
+    grid-template-columns: minmax(260px, 0.8fr) minmax(500px, 1.5fr);
+  }
+
+  .desk-dm-live-top > .ant-card:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1050px) {
+  .desk-dm-summary-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .desk-dm-summary-strip > div {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  }
+
+  .desk-dm-live-top,
+  .desk-dm-live-bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .desk-dm-live-top > .ant-card:last-child {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .desk-dm-summary-strip,
+  .desk-dm-live-metrics,
+  .desk-dm-device-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .desk-dm-summary-strip > div {
+    border-right: 0;
+  }
+
+  .desk-dm-command-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .desk-dm-command-row .ant-select,
+  .desk-dm-command-row .ant-btn {
+    width: 100% !important;
+  }
+}
+
 .desk-onb-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

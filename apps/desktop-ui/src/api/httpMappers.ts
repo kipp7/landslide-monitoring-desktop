@@ -138,7 +138,8 @@ function normalizeStationStatus(value: StationPayload["status"]): Station["statu
 
 function normalizeDeviceType(value: unknown): DeviceType {
   const raw = readString(value).toLowerCase();
-  if (raw === "gnss" || raw === "gps" || raw === "multi_sensor" || raw === "multisensor") return "gnss";
+  if (raw === "gnss" || raw === "gps") return "gnss";
+  if (raw === "multi_sensor" || raw === "multisensor") return "multi_sensor";
   if (raw === "rain" || raw === "rainfall") return "rain";
   if (raw === "tilt" || raw === "inclinometer") return "tilt";
   if (raw === "camera" || raw === "video") return "camera";

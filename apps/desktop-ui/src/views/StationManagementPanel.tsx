@@ -66,6 +66,7 @@ type HierarchyRegion = {
 
 function deviceTypeLabel(type: DeviceType) {
   if (type === "gnss") return "GNSS";
+  if (type === "multi_sensor") return "土壤/倾角多传感";
   if (type === "rain") return "雨量";
   if (type === "tilt") return "倾角";
   if (type === "temp_hum") return "温湿度";
@@ -74,6 +75,11 @@ function deviceTypeLabel(type: DeviceType) {
 
 function canonicalText(value?: string | null): string {
   return value?.trim() ? value.trim() : "—";
+}
+
+function formatCoordinate(lat: number, lng: number, digits = 5): string {
+  if (lat === 0 && lng === 0) return "未配置";
+  return `${lat.toFixed(digits)}, ${lng.toFixed(digits)}`;
 }
 
 function normalizeIdentityClass(value?: string | null): string {
@@ -257,7 +263,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
     const total = visibleStations.length;
     const online = visibleStations.filter((s) => s.status === "online").length;
     const offline = visibleStations.filter((s) => s.status === "offline").length;
-    const highRisk = visibleStations.filter((s) => s.riskLevel === "high").length;
+    const highRisk = visibleStations.filter((s) => s.riskConfigured && s.riskLevel === "high").length;
     return { total, online, offline, highRisk };
   }, [visibleStations]);
 
@@ -324,7 +330,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       lifecycleStatus: st.lifecycleStatus ?? "",
       locationName: st.locationName,
       description: st.description,
-      riskLevel: st.riskLevel,
+      ...(st.riskConfigured ? { riskLevel: st.riskLevel } : {}),
       status: st.status,
       sensorTypes: st.sensorTypes
     });
@@ -387,7 +393,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
           <div className="desk-sm-station-cell-head">
             <div className="desk-sm-station-cell-title">{row.displayName ?? row.stationName}</div>
             <StatusTag value={row.status} />
-            <RiskTag value={row.riskLevel} />
+            {row.riskConfigured ? <RiskTag value={row.riskLevel} /> : <Tag>未研判</Tag>}
           </div>
           <div className="desk-sm-station-cell-sub">{row.stationName}</div>
           <div className="desk-sm-station-cell-sub">
@@ -467,7 +473,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       render: (_: unknown, row) => (
         centeredCell(
           <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-            {row.lat.toFixed(5)}, {row.lng.toFixed(5)}
+            {formatCoordinate(row.lat, row.lng)}
           </span>,
           "desk-sm-coord-cell"
         )
@@ -479,7 +485,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       key: "lastDataTime",
       width: 188,
       align: "center",
-      render: (v: string) => centeredCell(formatBeijingDateTime(v, { includeSeconds: false }), "desk-sm-last-data-cell")
+      render: (v: string | null) => centeredCell(v ? formatBeijingDateTime(v, { includeSeconds: false }) : "未上报", "desk-sm-last-data-cell")
     },
     {
       title: "图例名称",
@@ -523,7 +529,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       title={
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <RadarChartOutlined style={{ color: "rgba(34,211,238,0.95)" }} />
-          <span>挂傍山监测站管理</span>
+          <span>监测站管理</span>
         </span>
       }
       extra={
@@ -591,7 +597,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
           <div className="desk-sm-stat">
             <div className="desk-sm-dot yellow" />
             <div>
-              <div className="desk-sm-stat-label">高风险</div>
+              <div className="desk-sm-stat-label">已配置高风险</div>
               <div className="desk-sm-stat-value" style={{ color: "#f59e0b" }}>
                 {counts.highRisk}
               </div>
@@ -697,7 +703,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                                   <div className="desk-sm-station-name">{st.displayName ?? st.stationName}</div>
                                   <div className="desk-sm-station-tags">
                                     <StatusTag value={st.status} />
-                                    <RiskTag value={st.riskLevel} />
+                                    {st.riskConfigured ? <RiskTag value={st.riskLevel} /> : <Tag>未研判</Tag>}
                                   </div>
                                 </div>
                                 <div className="desk-sm-station-sub">{st.displayName ?? st.stationName}</div>
@@ -850,7 +856,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
               placeholder="选择传感器类型"
               options={[
                 { label: "GNSS", value: "gnss" },
-                { label: "雨量", value: "rain" },
+                { label: "土壤/倾角多传感", value: "multi_sensor" },
                 { label: "倾角", value: "tilt" },
                 { label: "温湿度", value: "temp_hum" },
                 { label: "摄像头", value: "camera" }
@@ -952,7 +958,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                 <div className="desk-sm-detail-item">
                   <span className="k">风险</span>
                   <span className="v">
-                    <RiskTag value={detailStation.riskLevel} />
+                    {detailStation.riskConfigured ? <RiskTag value={detailStation.riskLevel} /> : <Tag>未研判</Tag>}
                   </span>
                 </div>
                 <div className="desk-sm-detail-item">
@@ -973,7 +979,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                 </div>
                 <div className="desk-sm-detail-item">
                   <span className="k">最后数据</span>
-                  <span className="v">{formatBeijingDateTime(detailStation.lastDataTime)}</span>
+                  <span className="v">{detailStation.lastDataTime ? formatBeijingDateTime(detailStation.lastDataTime) : "未上报"}</span>
                 </div>
               </div>
             </div>
@@ -1003,7 +1009,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
               <div className="desk-sm-detail-item">
                 <span className="k">坐标</span>
                 <span className="v" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                  {detailStation.lat.toFixed(6)}, {detailStation.lng.toFixed(6)}
+                  {formatCoordinate(detailStation.lat, detailStation.lng, 6)}
                 </span>
               </div>
             </div>
