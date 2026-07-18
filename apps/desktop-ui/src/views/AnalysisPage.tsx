@@ -100,7 +100,17 @@ function deviceTypeLabel(type: Device["type"]): string {
   return "视频";
 }
 
-function isSoilSensorDevice(device: Device): boolean {
+function isSoilSensorDevice(device: Device, snapshot?: DeviceStateSnapshot | null): boolean {
+  const metrics = snapshot?.metrics ?? {};
+  if (
+    readMetricNumber(metrics, "soil_temperature_c") != null ||
+    readMetricNumber(metrics, "temperature_c") != null ||
+    readMetricNumber(metrics, "soil_moisture_pct") != null ||
+    readMetricNumber(metrics, "humidity_pct") != null ||
+    readMetricNumber(metrics, "electrical_conductivity_us_cm") != null
+  ) {
+    return true;
+  }
   const text = [
     device.type,
     device.name,
@@ -782,6 +792,21 @@ function averageTelemetryBuckets(
   });
 }
 
+async function loadTelemetrySeriesWithRetry(
+  load: () => Promise<TelemetrySeriesPoint[]>
+): Promise<TelemetrySeriesPoint[]> {
+  try {
+    return await load();
+  } catch {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 200));
+    try {
+      return await load();
+    } catch {
+      return [];
+    }
+  }
+}
+
 function buildHistoryRange(range: HistoryRangeKey): {
   buckets: TimeBucketValue[];
   unit: "hour" | "day";
@@ -1098,15 +1123,15 @@ export function AnalysisPage() {
       try {
         const rainfallSeries = await Promise.all(
           rainDevices.map((device) =>
-            api.telemetry
-              .getSeries({
+            loadTelemetrySeriesWithRetry(() =>
+              api.telemetry.getSeries({
                 deviceId: device.id,
                 sensorKey: "rainfall_mm",
                 startTime,
                 endTime,
                 interval
               })
-              .catch(() => [])
+            )
           )
         );
 
@@ -1130,7 +1155,7 @@ export function AnalysisPage() {
   }, [mapType]);
 
   useEffect(() => {
-    const soilDevices = visibleDevices.filter(isSoilSensorDevice);
+    const soilDevices = visibleDevices.filter((device) => isSoilSensorDevice(device, deviceStates[device.id]));
     const { buckets, unit, interval, startTime, endTime } = realtimeTrendWindow;
     const trendSources = useNodeLevelTrend
       ? buildNodeTrendSources(soilDevices)
@@ -1151,28 +1176,28 @@ export function AnalysisPage() {
             const [temperatureSeries, moistureSeries] = await Promise.all([
               Promise.all(
                 source.devices.map((device) =>
-                  api.telemetry
-                    .getSeries({
+                  loadTelemetrySeriesWithRetry(() =>
+                    api.telemetry.getSeries({
                       deviceId: device.id,
                       sensorKey: "soil_temperature_c",
                       startTime,
                       endTime,
                       interval
                     })
-                    .catch(() => [])
+                  )
                 )
               ),
               Promise.all(
                 source.devices.map((device) =>
-                  api.telemetry
-                    .getSeries({
+                  loadTelemetrySeriesWithRetry(() =>
+                    api.telemetry.getSeries({
                       deviceId: device.id,
                       sensorKey: "soil_moisture_pct",
                       startTime,
                       endTime,
                       interval
                     })
-                    .catch(() => [])
+                  )
                 )
               )
             ]);
@@ -1203,14 +1228,20 @@ export function AnalysisPage() {
 
     void loadSoilTrend();
     return () => abort.abort();
-  }, [api, chartGroups, realtimeTrendWindow, trendRefreshSeq, useNodeLevelTrend, visibleDevices]);
+  }, [api, chartGroups, deviceStates, realtimeTrendWindow, trendRefreshSeq, useNodeLevelTrend, visibleDevices]);
 
   useEffect(() => {
-    const soilDevices = visibleDevices.filter(isSoilSensorDevice);
+    const conductivityDevices = visibleDevices.filter((device) => {
+      const snapshot = deviceStates[device.id];
+      return (
+        isSoilSensorDevice(device, snapshot) &&
+        readMetricNumber(snapshot?.metrics, "electrical_conductivity_us_cm") != null
+      );
+    });
     const { buckets, unit, interval, startTime, endTime } = realtimeTrendWindow;
     const trendSources = useNodeLevelTrend
-      ? buildNodeTrendSources(soilDevices)
-      : buildGroupedTrendSources(chartGroups, soilDevices);
+      ? buildNodeTrendSources(conductivityDevices)
+      : buildGroupedTrendSources(chartGroups, conductivityDevices);
     if (!trendSources.length) {
       setConductivityTrendGroups([]);
       setConductivityTrendLoading(false);
@@ -1226,15 +1257,15 @@ export function AnalysisPage() {
           trendSources.map(async (source) => {
             const conductivitySeries = await Promise.all(
               source.devices.map((device) =>
-                api.telemetry
-                  .getSeries({
+                loadTelemetrySeriesWithRetry(() =>
+                  api.telemetry.getSeries({
                     deviceId: device.id,
                     sensorKey: "electrical_conductivity_us_cm",
                     startTime,
                     endTime,
                     interval
                   })
-                  .catch(() => [])
+                )
               )
             );
             return {
@@ -1257,7 +1288,7 @@ export function AnalysisPage() {
 
     void loadConductivityTrend();
     return () => abort.abort();
-  }, [api, chartGroups, realtimeTrendWindow, trendRefreshSeq, useNodeLevelTrend, visibleDevices]);
+  }, [api, chartGroups, deviceStates, realtimeTrendWindow, trendRefreshSeq, useNodeLevelTrend, visibleDevices]);
 
   useEffect(() => {
     const tiltDevices = visibleDevices.filter((device) => isTiltSensorDevice(device, deviceStates[device.id]));
@@ -1281,28 +1312,28 @@ export function AnalysisPage() {
             const [tiltXSeries, tiltYSeries] = await Promise.all([
               Promise.all(
                 source.devices.map((device) =>
-                  api.telemetry
-                    .getSeries({
+                  loadTelemetrySeriesWithRetry(() =>
+                    api.telemetry.getSeries({
                       deviceId: device.id,
                       sensorKey: "tilt_x_deg",
                       startTime,
                       endTime,
                       interval
                     })
-                    .catch(() => [])
+                  )
                 )
               ),
               Promise.all(
                 source.devices.map((device) =>
-                  api.telemetry
-                    .getSeries({
+                  loadTelemetrySeriesWithRetry(() =>
+                    api.telemetry.getSeries({
                       deviceId: device.id,
                       sensorKey: "tilt_y_deg",
                       startTime,
                       endTime,
                       interval
                     })
-                    .catch(() => [])
+                  )
                 )
               )
             ]);
@@ -1366,15 +1397,15 @@ export function AnalysisPage() {
 
             const seriesList = await Promise.all(
               groupDevices.map((device) =>
-                api.telemetry
-                  .getSeries({
+                loadTelemetrySeriesWithRetry(() =>
+                  api.telemetry.getSeries({
                     deviceId: device.id,
                     sensorKey: historyMetric.key,
                     startTime,
                     endTime,
                     interval
                   })
-                  .catch(() => [])
+                )
               )
             );
             const flatSeries = seriesList
@@ -1553,7 +1584,11 @@ export function AnalysisPage() {
     const avg = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
     if (useNodeLevelTrend) {
       return liveSnapshotRows
-        .filter((row) => isSoilSensorDevice(row.device) && (row.soilTemperatureC != null || row.soilMoisturePct != null))
+        .filter(
+          (row) =>
+            isSoilSensorDevice(row.device, deviceStates[row.device.id]) &&
+            (row.soilTemperatureC != null || row.soilMoisturePct != null)
+        )
         .map((row) => ({
           label: fieldNodeLegendLabel(row.device),
           soilTemperatureC: row.soilTemperatureC,
@@ -1565,7 +1600,7 @@ export function AnalysisPage() {
     return chartGroups.map((group) => {
       const groupStationIds = new Set(group.stationIds);
       const stationRows = liveSnapshotRows.filter((row) => groupStationIds.has(row.device.stationId));
-      const preferredRows = stationRows.filter((row) => isSoilSensorDevice(row.device));
+      const preferredRows = stationRows.filter((row) => isSoilSensorDevice(row.device, deviceStates[row.device.id]));
       const soilRows = (preferredRows.length ? preferredRows : stationRows).filter(
         (row) => row.soilTemperatureC != null || row.soilMoisturePct != null
       );
@@ -1576,7 +1611,7 @@ export function AnalysisPage() {
         soilMoisturePct: avg(soilRows.map((row) => row.soilMoisturePct).filter((value): value is number => value != null))
       };
     });
-  }, [chartGroups, liveSnapshotRows, useNodeLevelTrend]);
+  }, [chartGroups, deviceStates, liveSnapshotRows, useNodeLevelTrend]);
 
   const soilProfileOption = useMemo(() => {
     const { axisLabel: _unusedAxisLabel, ...baseXAxis } = chartBase.xAxis as Record<string, unknown>;
@@ -1610,11 +1645,11 @@ export function AnalysisPage() {
         {
           type: "value",
           name: "%",
-          min: 0,
+          min: -5,
           max: 100,
           ...darkAxis(),
           nameTextStyle: { color: "rgba(52, 211, 153, 0.72)" },
-          axisLabel: { ...darkAxis().axisLabel, margin: 2, formatter: "{value}" }
+          axisLabel: { ...darkAxis().axisLabel, margin: 2, formatter: (value: number) => (value < 0 ? "" : `${value}`) }
         }
       ],
       series: [
@@ -1649,7 +1684,7 @@ export function AnalysisPage() {
     const avg = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
     if (useNodeLevelTrend) {
       return liveSnapshotRows
-        .filter((row) => isSoilSensorDevice(row.device) && row.conductivityUsCm != null)
+        .filter((row) => isSoilSensorDevice(row.device, deviceStates[row.device.id]) && row.conductivityUsCm != null)
         .map((row) => ({
           label: fieldNodeLegendLabel(row.device),
           conductivityUsCm: row.conductivityUsCm
@@ -1661,7 +1696,7 @@ export function AnalysisPage() {
       const groupStationIds = new Set(group.stationIds);
       const stationRows = liveSnapshotRows.filter((row) => groupStationIds.has(row.device.stationId));
       const conductivityRows = stationRows
-        .filter((row) => isSoilSensorDevice(row.device))
+        .filter((row) => isSoilSensorDevice(row.device, deviceStates[row.device.id]))
         .map((row) => row.conductivityUsCm)
         .filter((value): value is number => value != null);
       return {
@@ -1669,7 +1704,7 @@ export function AnalysisPage() {
         conductivityUsCm: avg(conductivityRows)
       };
     });
-  }, [chartGroups, liveSnapshotRows, useNodeLevelTrend]);
+  }, [chartGroups, deviceStates, liveSnapshotRows, useNodeLevelTrend]);
 
   const conductivityProfileOption = useMemo(() => {
     const { axisLabel: _unusedAxisLabel, ...baseXAxis } = chartBase.xAxis as Record<string, unknown>;
@@ -1680,25 +1715,45 @@ export function AnalysisPage() {
       tooltip: { trigger: "axis", ...darkTooltip() },
       xAxis: {
         ...baseXAxis,
+        show: rows.length > 0,
         data: rows.map((row) => row.label),
         axisLabel: { ...darkAxis().axisLabel, hideOverlap: true }
       },
       yAxis: {
         type: "value",
         name: "μS/cm",
+        show: rows.length > 0,
         ...darkAxis(),
         nameTextStyle: { color: "rgba(251, 191, 36, 0.72)" },
         axisLabel: { ...darkAxis().axisLabel, margin: 3 }
       },
-      series: [
-        {
-          name: "电导率",
-          type: "bar",
-          data: rows.map((row) => row.conductivityUsCm == null ? null : Number(row.conductivityUsCm.toFixed(0))),
-          barWidth: 16,
-          itemStyle: { color: "rgba(251, 191, 36, 0.82)" }
-        }
-      ]
+      series: rows.length
+        ? [
+            {
+              name: "电导率",
+              type: "bar",
+              data: rows.map((row) => row.conductivityUsCm == null ? null : Number(row.conductivityUsCm.toFixed(0))),
+              barWidth: 16,
+              itemStyle: { color: "rgba(251, 191, 36, 0.82)" }
+            }
+          ]
+        : [],
+      graphic: rows.length
+        ? undefined
+        : {
+            type: "text",
+            left: "center",
+            top: "middle",
+            silent: true,
+            style: {
+              text: "当前节点未提供土壤电导率数据\n传感器未启用该指标",
+              fill: "rgba(203, 213, 225, 0.72)",
+              fontSize: 12,
+              fontWeight: 600,
+              lineHeight: 20,
+              textAlign: "center"
+            }
+          }
     };
   }, [chartBase, conductivityProfileRows]);
 
@@ -1748,7 +1803,10 @@ export function AnalysisPage() {
           name: group.label,
           type: "line",
           smooth: true,
-          showSymbol: false,
+          showSymbol: realtimeTrendRange === "60s",
+          symbol: "circle",
+          symbolSize: realtimeTrendRange === "60s" ? 7 : 4,
+          connectNulls: realtimeTrendRange === "60s",
           data: group.buckets.map((bucket) => bucket.value == null ? null : Number(bucket.value.toFixed(2))),
           lineStyle: { width: 2.2, color },
           itemStyle: { color },
@@ -1756,7 +1814,7 @@ export function AnalysisPage() {
         };
       })
     };
-  }, [chartBase, conductivityTrendGroups, realtimeTrendWindow.buckets]);
+  }, [chartBase, conductivityTrendGroups, realtimeTrendRange, realtimeTrendWindow.buckets]);
 
   const conductivityDisplayOption = conductivityTrendHasSeries ? conductivityTrendOption : conductivityProfileOption;
   const conductivityCardTitle =
@@ -1819,11 +1877,11 @@ export function AnalysisPage() {
         {
           type: "value",
           name: "%",
-          min: 0,
+          min: -5,
           max: 100,
           ...darkAxis(),
           nameTextStyle: { color: "rgba(52, 211, 153, 0.72)" },
-          axisLabel: { ...darkAxis().axisLabel, margin: 2, formatter: "{value}" }
+          axisLabel: { ...darkAxis().axisLabel, margin: 2, formatter: (value: number) => (value < 0 ? "" : `${value}`) }
         }
       ],
       series: groups.flatMap((group, idx) => {
@@ -1835,7 +1893,10 @@ export function AnalysisPage() {
             name: temperatureName,
             type: "line",
             smooth: true,
-            showSymbol: false,
+            showSymbol: realtimeTrendRange === "60s",
+            symbol: "circle",
+            symbolSize: realtimeTrendRange === "60s" ? 7 : 4,
+            connectNulls: realtimeTrendRange === "60s",
             data: group.buckets.map((bucket) => bucket.temperatureC == null ? null : Number(bucket.temperatureC.toFixed(2))),
             lineStyle: { width: 2.2, color },
             itemStyle: { color }
@@ -1845,7 +1906,10 @@ export function AnalysisPage() {
             type: "line",
             yAxisIndex: 1,
             smooth: true,
-            showSymbol: false,
+            showSymbol: realtimeTrendRange === "60s",
+            symbol: "circle",
+            symbolSize: realtimeTrendRange === "60s" ? 7 : 4,
+            connectNulls: realtimeTrendRange === "60s",
             data: group.buckets.map((bucket) => bucket.moisturePct == null ? null : Number(bucket.moisturePct.toFixed(2))),
             lineStyle: { width: 2, type: "dashed", color, opacity: 0.78 },
             itemStyle: { color, opacity: 0.78 }
@@ -1853,7 +1917,7 @@ export function AnalysisPage() {
         ];
       })
     };
-  }, [chartBase, realtimeTrendWindow.buckets, soilTrendGroups]);
+  }, [chartBase, realtimeTrendRange, realtimeTrendWindow.buckets, soilTrendGroups]);
 
   const soilDisplayOption = soilTrendHasSeries ? soilTrendOption : soilProfileOption;
   const soilCardTitle =
@@ -1922,7 +1986,10 @@ export function AnalysisPage() {
             name: tiltXName,
             type: "line",
             smooth: true,
-            showSymbol: false,
+            showSymbol: realtimeTrendRange === "60s",
+            symbol: "circle",
+            symbolSize: realtimeTrendRange === "60s" ? 7 : 4,
+            connectNulls: realtimeTrendRange === "60s",
             data: group.buckets.map((bucket) => bucket.tiltXDeg == null ? null : Number(bucket.tiltXDeg.toFixed(3))),
             lineStyle: { width: 2.2, color },
             itemStyle: { color }
@@ -1931,7 +1998,10 @@ export function AnalysisPage() {
             name: tiltYName,
             type: "line",
             smooth: true,
-            showSymbol: false,
+            showSymbol: realtimeTrendRange === "60s",
+            symbol: "circle",
+            symbolSize: realtimeTrendRange === "60s" ? 7 : 4,
+            connectNulls: realtimeTrendRange === "60s",
             data: group.buckets.map((bucket) => bucket.tiltYDeg == null ? null : Number(bucket.tiltYDeg.toFixed(3))),
             lineStyle: { width: 2, type: "dashed", color, opacity: 0.78 },
             itemStyle: { color, opacity: 0.78 },
@@ -1940,7 +2010,7 @@ export function AnalysisPage() {
         ];
       })
     };
-  }, [chartBase, realtimeTrendWindow.buckets, tiltTrendGroups]);
+  }, [chartBase, realtimeTrendRange, realtimeTrendWindow.buckets, tiltTrendGroups]);
 
   const tiltProfileOption = useMemo(() => {
     const { axisLabel: _unusedAxisLabel, ...baseXAxis } = chartBase.xAxis as Record<string, unknown>;
