@@ -66,7 +66,11 @@ export type ResetAccountPasswordResult = {
 export type DashboardSummary = {
   stationCount: number;
   deviceOnlineCount: number;
+  totalDeviceCount?: number;
+  offlineDeviceCount?: number;
+  freshDeviceCount?: number;
   alertCountToday: number;
+  pendingAlertCount?: number;
   systemHealthPercent: number;
 };
 

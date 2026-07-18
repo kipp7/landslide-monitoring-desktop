@@ -9,6 +9,11 @@ import { RiskTag } from "../../components/RiskTag";
 import { StatusTag } from "../../components/StatusTag";
 import { loadPins, savePins } from "./homePersist";
 
+function hasMeasuredRisk(station: Station) {
+  const value = station.metadata?.riskLevel ?? station.metadata?.risk_level;
+  return value === "low" || value === "mid" || value === "high";
+}
+
 export function HomeKeySitesCard(props: { loading: boolean; stations: Station[]; devices: Device[] }) {
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
@@ -159,7 +164,7 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
                   <div className="desk-home-site-title">
                     <div className="desk-home-site-name">{st.name}</div>
                     <div className="desk-home-site-tags">
-                      <RiskTag value={st.risk} />
+                      {hasMeasuredRisk(st) ? <RiskTag value={st.risk} /> : <Tag>未研判</Tag>}
                       <StatusTag value={st.status} />
                       {pinned ? <Tag color="cyan">已固定</Tag> : null}
                     </div>

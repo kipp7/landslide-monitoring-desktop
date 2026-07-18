@@ -8,6 +8,16 @@ import { BaseCard } from "../../components/BaseCard";
 import { buildSystemTasks, createId, loadTodos, priorityLabel, saveTodos } from "./homePersist";
 import type { HomeTask, HomeTaskPriority, HomeTodoPersist } from "./homePersist";
 
+function taskTimeLabel(task: HomeTask) {
+  const timestamp = Date.parse(task.createdAt);
+  const isDeviceStatusTask = task.source === "system" && Boolean(task.deviceId);
+  const prefix = isDeviceStatusTask ? "最近上报" : task.source === "system" ? "生成" : "创建";
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return `${prefix}：${isDeviceStatusTask ? "从未上报" : "—"}`;
+  }
+  return `${prefix}：${new Date(timestamp).toLocaleString("zh-CN")}`;
+}
+
 export function HomeTodosCard(props: { loading: boolean; stations: Station[]; devices: Device[] }) {
   const navigate = useNavigate();
   const { message, modal } = AntApp.useApp();
@@ -183,7 +193,7 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
               {doneAt ? (
                 <span> · 完成：{new Date(doneAt).toLocaleString("zh-CN")}</span>
               ) : (
-                <span> · 创建：{new Date(t.createdAt).toLocaleString("zh-CN")}</span>
+                <span> · {taskTimeLabel(t)}</span>
               )}
             </div>
           </div>

@@ -233,7 +233,11 @@ export function mapDashboardSummaryFromV1(input: DashboardPayload): DashboardSum
   return {
     stationCount: Number(input.stations ?? 0),
     deviceOnlineCount: Number(input.onlineDevices ?? 0),
+    totalDeviceCount: Number(input.totalDevices ?? 0),
+    offlineDeviceCount: Number(input.offlineDevices ?? 0),
+    freshDeviceCount: Number(input.freshDevices ?? 0),
     alertCountToday: Number(input.todayAlerts ?? 0),
+    pendingAlertCount: Number(input.pendingAlerts ?? 0),
     systemHealthPercent: Math.max(0, Math.min(100, Math.round(healthScore * 100)))
   };
 }
