@@ -1,13 +1,11 @@
 import {
-  ArrowLeftOutlined,
   DownloadOutlined,
   EyeOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
-import { Button, Drawer, Select, Space, Table, Tag } from "antd";
+import { Button, Empty, Select, Space, Table, Tag, Tooltip } from "antd";
 import type { TableProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 import type {
   AlertLifecycleEvent,
@@ -115,10 +113,9 @@ function exportArchive(records: ReviewArchiveRecord[], deviceLabel: (deviceId: s
 
 export function ReviewArchivePage() {
   const api = useApi();
-  const navigate = useNavigate();
   const requestSequence = useRef(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize] = useState(12);
   const [severity, setSeverity] = useState<AlertSeverity | undefined>();
   const [deviceId, setDeviceId] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
@@ -181,7 +178,7 @@ export function ReviewArchivePage() {
       setDevices(deviceResult);
       setStations(stationResult);
       setSelectedRecord((current) =>
-        current ? nextRecords.find((record) => record.alert.alertId === current.alert.alertId) ?? null : null
+        current ? nextRecords.find((record) => record.alert.alertId === current.alert.alertId) ?? nextRecords[0] ?? null : nextRecords[0] ?? null
       );
     } catch (loadError) {
       if (sequence !== requestSequence.current) return;
@@ -222,13 +219,13 @@ export function ReviewArchivePage() {
     {
       title: "归档时间",
       dataIndex: "resolvedAt",
-      width: 170,
+      width: 150,
       render: (_value, record) => <span className="review-archive-mono">{formatBeijingDateTime(record.resolvedAt)}</span>,
     },
     {
       title: "节点 / 监测站",
       key: "target",
-      width: 230,
+      width: 190,
       render: (_value, record) => (
         <div className="review-archive-target">
           <strong>{deviceLabel(record.alert.deviceId)}</strong>
@@ -239,13 +236,13 @@ export function ReviewArchivePage() {
     {
       title: "最终等级",
       dataIndex: ["alert", "severity"],
-      width: 110,
+      width: 96,
       render: (_value, record) => <Tag color={severityColor(record.alert.severity)}>{severityLabel(record.alert.severity)}</Tag>,
     },
     {
       title: "复核结论",
       dataIndex: "conclusion",
-      width: 140,
+      width: 118,
       render: (value: string) => <strong className="review-archive-conclusion">{value}</strong>,
     },
     {
@@ -257,25 +254,26 @@ export function ReviewArchivePage() {
     {
       title: "处置时长",
       key: "duration",
-      width: 130,
+      width: 106,
       render: (_value, record) => durationText(record.firstTriggeredAt, record.resolvedAt),
     },
     {
       title: "操作",
       key: "action",
-      width: 92,
-      fixed: "right",
+      width: 58,
       render: (_value, record) => (
-        <Button
-          type="text"
-          icon={<EyeOutlined />}
-          onClick={(event) => {
-            event.stopPropagation();
-            setSelectedRecord(record);
-          }}
-        >
-          查看
-        </Button>
+        <Tooltip title="查看档案">
+          <Button
+            type="text"
+            shape="circle"
+            aria-label="查看档案"
+            icon={<EyeOutlined />}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedRecord(record);
+            }}
+          />
+        </Tooltip>
       ),
     },
   ];
@@ -291,141 +289,149 @@ export function ReviewArchivePage() {
   return (
     <div className="desk-page review-archive-page">
       <header className="review-archive-head">
-        <div>
-          <span className="review-archive-eyebrow">ALERT REVIEW RECORDS</span>
-          <h1>告警复核档案</h1>
-          <p>服务器已归档告警、生命周期证据和人工复核结论。</p>
+        <div className="review-archive-title-block">
+          <span className="review-archive-title-mark" aria-hidden="true" />
+          <div>
+            <h1>复核档案</h1>
+            <p>已完成处置的真实告警、人工结论与生命周期证据。</p>
+          </div>
         </div>
-        <Space size={8} wrap>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/app/analysis")}>返回监测大屏</Button>
+        <Space className="review-archive-actions" size={8} wrap>
           <Button icon={<DownloadOutlined />} disabled={!records.length} onClick={() => exportArchive(records, deviceLabel)}>
-            导出当前页
+            导出
           </Button>
           <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>
-            刷新档案
+            刷新
           </Button>
         </Space>
       </header>
 
       <section className="review-archive-kpis" aria-label="复核档案统计">
-        <div><span>已归档总数</span><strong>{total}</strong><em>服务器 resolved 记录</em></div>
-        <div><span>严重风险</span><strong className="is-critical">{summary.critical}</strong><em>当前筛选口径</em></div>
-        <div><span>高风险</span><strong className="is-high">{summary.high}</strong><em>当前筛选口径</em></div>
-        <div><span>本页节点</span><strong>{representedNodeCount}</strong><em>本页严重 {pageCriticalCount} 条</em></div>
+        <div><span>归档记录</span><strong>{total}</strong><em>当前筛选结果</em></div>
+        <div><span>严重风险</span><strong className="is-critical">{summary.critical}</strong><em>已完成复核</em></div>
+        <div><span>高风险</span><strong className="is-high">{summary.high}</strong><em>已完成复核</em></div>
+        <div><span>涉及节点</span><strong>{representedNodeCount}</strong><em>本页严重 {pageCriticalCount} 条</em></div>
       </section>
 
-      <section className="review-archive-workspace">
-        <div className="review-archive-toolbar">
-          <div>
-            <strong>档案清单</strong>
-            <span>每条记录均可追溯触发、更新、确认与归档事件</span>
+      <section className="review-archive-workbench">
+        <div className="review-archive-list-panel">
+          <div className="review-archive-toolbar">
+            <div>
+              <strong>档案清单</strong>
+              <span>点击记录查看完整证据链</span>
+            </div>
+            <Space size={8} wrap>
+              <Select
+                allowClear
+                placeholder="全部节点"
+                value={deviceId}
+                style={{ width: 176 }}
+                options={devices.map((device) => ({
+                  value: device.id,
+                  label: formatInstallLabelDisplay(device.installLabel ?? device.name, device.id),
+                }))}
+                onChange={(value) => { setDeviceId(value); setPage(1); }}
+              />
+              <Select
+                allowClear
+                placeholder="全部等级"
+                value={severity}
+                style={{ width: 126 }}
+                options={(["critical", "high", "medium", "low"] as AlertSeverity[]).map((value) => ({
+                  value,
+                  label: severityLabel(value),
+                }))}
+                onChange={(value) => { setSeverity(value); setPage(1); }}
+              />
+            </Space>
           </div>
-          <Space size={8} wrap>
-            <Select
-              allowClear
-              placeholder="全部节点"
-              value={deviceId}
-              style={{ width: 190 }}
-              options={devices.map((device) => ({
-                value: device.id,
-                label: formatInstallLabelDisplay(device.installLabel ?? device.name, device.id),
-              }))}
-              onChange={(value) => { setDeviceId(value); setPage(1); }}
-            />
-            <Select
-              allowClear
-              placeholder="全部等级"
-              value={severity}
-              style={{ width: 140 }}
-              options={(["critical", "high", "medium", "low"] as AlertSeverity[]).map((value) => ({
-                value,
-                label: severityLabel(value),
-              }))}
-              onChange={(value) => { setSeverity(value); setPage(1); }}
-            />
-          </Space>
+
+          {error ? <div className="review-archive-error">{error}</div> : null}
+          <Table<ReviewArchiveRecord>
+            rowKey={(record) => record.alert.alertId}
+            columns={columns}
+            dataSource={records}
+            loading={loading}
+            size="middle"
+            scroll={{ x: 960 }}
+            locale={{ emptyText: "当前筛选条件下没有已归档的真实告警记录" }}
+            rowClassName={(record) => `review-archive-row${selectedRecord?.alert.alertId === record.alert.alertId ? " is-selected" : ""}`}
+            onRow={(record) => ({ onClick: () => setSelectedRecord(record) })}
+            pagination={{
+              current: page,
+              pageSize,
+              total,
+              showSizeChanger: false,
+              showTotal: (value) => `共 ${value} 条`,
+              onChange: setPage,
+            }}
+          />
         </div>
 
-        {error ? <div className="review-archive-error">{error}</div> : null}
-        <Table<ReviewArchiveRecord>
-          rowKey={(record) => record.alert.alertId}
-          columns={columns}
-          dataSource={records}
-          loading={loading}
-          scroll={{ x: 1120 }}
-          locale={{ emptyText: "当前筛选条件下没有已归档的真实告警记录" }}
-          rowClassName="review-archive-row"
-          onRow={(record) => ({ onClick: () => setSelectedRecord(record) })}
-          pagination={{
-            current: page,
-            pageSize,
-            total,
-            showSizeChanger: false,
-            showTotal: (value) => `共 ${value} 条档案`,
-            onChange: setPage,
-          }}
-        />
-      </section>
-
-      <Drawer
-        className="review-archive-drawer"
-        width={620}
-        open={selectedRecord != null}
-        title="复核档案详情"
-        onClose={() => setSelectedRecord(null)}
-      >
-        {selectedRecord ? (
-          <div className="review-archive-detail">
-            <div className="review-archive-detail-head">
-              <div>
-                <Tag color={severityColor(selectedRecord.alert.severity)}>{severityLabel(selectedRecord.alert.severity)}</Tag>
-                <Tag color="green">已归档</Tag>
-              </div>
-              <h2>{selectedRecord.alert.title || "倾角监测告警"}</h2>
-              <p>{selectedRecord.note}</p>
-            </div>
-
-            <div className="review-archive-detail-grid">
-              <div><span>复核结论</span><strong>{selectedRecord.conclusion}</strong></div>
-              <div><span>处置时长</span><strong>{durationText(selectedRecord.firstTriggeredAt, selectedRecord.resolvedAt)}</strong></div>
-              <div><span>节点</span><strong>{deviceLabel(selectedRecord.alert.deviceId)}</strong></div>
-              <div><span>监测站</span><strong>{stationLabel(selectedRecord.alert.stationId)}</strong></div>
-              <div><span>规则</span><strong>{selectedRecord.alert.ruleId} · v{selectedRecord.alert.ruleVersion}</strong></div>
-              <div><span>档案编号</span><strong title={selectedRecord.alert.alertId}>{selectedRecord.alert.alertId}</strong></div>
-            </div>
-
-            <section className="review-archive-evidence">
-              <div className="review-archive-section-title">触发证据</div>
-              <div className="review-archive-evidence-grid">
-                <div><span>最大偏移</span><strong>{readNumber(selectedEvidence, "maxDeviationDeg")?.toFixed(3) ?? "--"}°</strong></div>
-                <div><span>主变化轴</span><strong>{String(selectedEvidence.maxAxis ?? "--").toUpperCase()}</strong></div>
-                <div><span>当前姿态</span><strong>X {readNumber(selectedCurrent, "x")?.toFixed(3) ?? "--"}° · Y {readNumber(selectedCurrent, "y")?.toFixed(3) ?? "--"}° · Z {readNumber(selectedCurrent, "z")?.toFixed(3) ?? "--"}°</strong></div>
-                <div><span>倾角基线</span><strong>X {readNumber(selectedBaseline, "x")?.toFixed(3) ?? "--"}° · Y {readNumber(selectedBaseline, "y")?.toFixed(3) ?? "--"}° · Z {readNumber(selectedBaseline, "z")?.toFixed(3) ?? "--"}°</strong></div>
-                <div><span>相对偏移</span><strong>X {readNumber(selectedDelta, "x")?.toFixed(3) ?? "--"}° · Y {readNumber(selectedDelta, "y")?.toFixed(3) ?? "--"}° · Z {readNumber(selectedDelta, "z")?.toFixed(3) ?? "--"}°</strong></div>
-              </div>
-            </section>
-
-            <section>
-              <div className="review-archive-section-title">生命周期</div>
-              {selectedRecord.events.length ? (
-                <div className="review-archive-lifecycle">
-                  {selectedRecord.events.map((event) => (
-                    <div key={event.eventId} className={`review-archive-event is-${event.eventType.toLowerCase()}`}>
-                      <i />
-                      <div>
-                        <div><strong>{lifecycleLabel(event.eventType)}</strong><span>{formatBeijingDateTime(event.createdAt)}</span></div>
-                        <p>{event.eventType === "ALERT_ACK" || event.eventType === "ALERT_RESOLVE" ? eventNote(event) : severityLabel(event.severity)}</p>
-                      </div>
-                    </div>
-                  ))}
+        <aside className="review-archive-detail-panel" aria-label="所选复核档案详情">
+          {selectedRecord ? (
+            <div className="review-archive-detail">
+              <div className="review-archive-detail-status">
+                <div>
+                  <Tag color={severityColor(selectedRecord.alert.severity)}>{severityLabel(selectedRecord.alert.severity)}</Tag>
+                  <Tag color="green">已归档</Tag>
                 </div>
-              ) : (
-                <div className="review-archive-detail-empty">生命周期事件暂不可用。</div>
-              )}
-            </section>
-          </div>
-        ) : null}
-      </Drawer>
+                <span>{formatBeijingDateTime(selectedRecord.resolvedAt)}</span>
+              </div>
+
+              <div className="review-archive-detail-head">
+                <h2>{deviceLabel(selectedRecord.alert.deviceId)}</h2>
+                <p>{selectedRecord.alert.title || "倾角监测告警"}</p>
+              </div>
+
+              <div className="review-archive-decision">
+                <span>人工复核结论</span>
+                <strong>{selectedRecord.conclusion}</strong>
+                <p>{selectedRecord.note}</p>
+              </div>
+
+              <div className="review-archive-detail-grid">
+                <div><span>处置时长</span><strong>{durationText(selectedRecord.firstTriggeredAt, selectedRecord.resolvedAt)}</strong></div>
+                <div><span>监测站</span><strong>{stationLabel(selectedRecord.alert.stationId)}</strong></div>
+                <div><span>规则版本</span><strong>{selectedRecord.alert.ruleId} · v{selectedRecord.alert.ruleVersion}</strong></div>
+                <div><span>档案编号</span><strong title={selectedRecord.alert.alertId}>{selectedRecord.alert.alertId}</strong></div>
+              </div>
+
+              <section className="review-archive-evidence">
+                <div className="review-archive-section-title">触发证据</div>
+                <div className="review-archive-evidence-grid">
+                  <div><span>最大偏移</span><strong>{readNumber(selectedEvidence, "maxDeviationDeg")?.toFixed(3) ?? "--"}°</strong></div>
+                  <div><span>主变化轴</span><strong>{String(selectedEvidence.maxAxis ?? "--").toUpperCase()}</strong></div>
+                  <div><span>当前姿态</span><strong>X {readNumber(selectedCurrent, "x")?.toFixed(3) ?? "--"}° · Y {readNumber(selectedCurrent, "y")?.toFixed(3) ?? "--"}° · Z {readNumber(selectedCurrent, "z")?.toFixed(3) ?? "--"}°</strong></div>
+                  <div><span>倾角基线</span><strong>X {readNumber(selectedBaseline, "x")?.toFixed(3) ?? "--"}° · Y {readNumber(selectedBaseline, "y")?.toFixed(3) ?? "--"}° · Z {readNumber(selectedBaseline, "z")?.toFixed(3) ?? "--"}°</strong></div>
+                  <div><span>相对偏移</span><strong>X {readNumber(selectedDelta, "x")?.toFixed(3) ?? "--"}° · Y {readNumber(selectedDelta, "y")?.toFixed(3) ?? "--"}° · Z {readNumber(selectedDelta, "z")?.toFixed(3) ?? "--"}°</strong></div>
+                </div>
+              </section>
+
+              <section>
+                <div className="review-archive-section-title">生命周期</div>
+                {selectedRecord.events.length ? (
+                  <div className="review-archive-lifecycle">
+                    {selectedRecord.events.map((event) => (
+                      <div key={event.eventId} className={`review-archive-event is-${event.eventType.toLowerCase()}`}>
+                        <i />
+                        <div>
+                          <div><strong>{lifecycleLabel(event.eventType)}</strong><span>{formatBeijingDateTime(event.createdAt)}</span></div>
+                          <p>{event.eventType === "ALERT_ACK" || event.eventType === "ALERT_RESOLVE" ? eventNote(event) : severityLabel(event.severity)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="review-archive-detail-empty">生命周期事件暂不可用。</div>
+                )}
+              </section>
+            </div>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一条档案查看证据链" />
+          )}
+        </aside>
+      </section>
     </div>
   );
 }

@@ -96,10 +96,10 @@ export function HoverSidebar({ userName, onLogout }: HoverSidebarProps) {
           items={[
             { key: "home", icon: <HomeOutlined />, label: "首页" },
             { key: "analysis", icon: <BarChartOutlined />, label: "数据分析" },
-            { key: "review-archive", icon: <FileDoneOutlined />, label: "复核档案" },
             { key: "device-management", icon: <DesktopOutlined />, label: "设备管理" },
             { key: "gps-monitoring", icon: <EnvironmentOutlined />, label: "地质形变监测" },
             { key: "system", icon: <RadarChartOutlined />, label: "系统监控" },
+            { key: "review-archive", icon: <FileDoneOutlined />, label: "复核档案" },
             { key: "accounts", icon: <TeamOutlined />, label: "账号管理" },
             { key: "settings", icon: <SettingOutlined />, label: "系统设置" }
           ]}

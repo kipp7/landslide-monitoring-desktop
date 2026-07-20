@@ -94,7 +94,29 @@ export function App() {
       locale={zhCN}
       theme={{
         algorithm: antdTheme.darkAlgorithm,
-        token: { borderRadius: 10, colorPrimary: "#06b6d4" }
+        token: { borderRadius: 7, colorPrimary: "#0891b2" },
+        components: {
+          Button: {
+            controlHeight: 34,
+            borderRadius: 6,
+            fontWeight: 700,
+            contentFontSize: 13,
+            paddingInline: 14,
+            defaultBg: "rgba(15, 23, 42, 0.78)",
+            defaultColor: "rgba(226, 232, 240, 0.94)",
+            defaultBorderColor: "rgba(100, 116, 139, 0.48)",
+            defaultHoverBg: "rgba(8, 145, 178, 0.12)",
+            defaultHoverColor: "#a5f3fc",
+            defaultHoverBorderColor: "rgba(34, 211, 238, 0.62)",
+            defaultActiveBg: "rgba(8, 145, 178, 0.2)",
+            defaultActiveColor: "#cffafe",
+            defaultActiveBorderColor: "#22d3ee",
+            defaultShadow: "none",
+            primaryShadow: "none",
+            dangerShadow: "none",
+            textHoverBg: "rgba(34, 211, 238, 0.1)"
+          }
+        }
       }}
     >
       <AntApp>
