@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type {
+  AiPrediction,
   CommandSuccessNotificationPolicyConfig,
   Device,
   DeviceStateSnapshot,
@@ -15,6 +16,7 @@ import type {
 } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
+import { extractAiRouteEvidence, regionalRerankLabel, regionalScopeLabel } from "../utils/aiPredictionEvidence";
 import { formatInstallLabelDisplay } from "../utils/fieldIdentityDisplay";
 import { formatBeijingDateTime } from "../utils/beijingTime";
 
@@ -236,27 +238,29 @@ function formatTimestamp(value: string | null | undefined): string {
 
 type HermesVolatilitySurface = NonNullable<NonNullable<SystemStatus["hermesEdge"]>["volatilitySurface"]>;
 
-function volatilityColor(score: number): string {
-  if (score >= 78) return "#ef4444";
-  if (score >= 60) return "#f97316";
-  if (score >= 42) return "#f59e0b";
-  if (score >= 24) return "#22c55e";
-  return "#38bdf8";
-}
-
-function volatilityLabel(score: number | null | undefined): string {
-  if (score == null) return "等待数据";
-  if (score >= 78) return "高波动";
-  if (score >= 60) return "明显波动";
-  if (score >= 42) return "轻度扰动";
-  return "稳定";
-}
+type SurfacePresentation = {
+  captionTitle: string;
+  captionText: string;
+  xAxisLabel: string;
+  yAxisLabel: string;
+  zAxisLabel: string;
+  legendLabels: [string, string, string];
+  colorMode?: "default" | "tilt-risk";
+  warningRatio?: number;
+};
 
 function findSurfacePoint(surface: HermesVolatilitySurface, dimensionKey: string, horizonMinutes: number) {
   return surface.points.find((point) => point.dimensionKey === dimensionKey && point.horizonMinutes === horizonMinutes) ?? null;
 }
 
-function scoreToThreeColor(score: number): THREE.Color {
+function scoreToThreeColor(score: number, colorMode: SurfacePresentation["colorMode"], warningRatio = 60): THREE.Color {
+  if (colorMode === "tilt-risk") {
+    if (score >= 100) return new THREE.Color("#ef4444");
+    if (score >= warningRatio) return new THREE.Color("#f97316");
+    if (score >= warningRatio * 0.6) return new THREE.Color("#facc15");
+    if (score >= warningRatio * 0.25) return new THREE.Color("#45d483");
+    return new THREE.Color("#67e8f9");
+  }
   if (score >= 78) return new THREE.Color("#f6bd60");
   if (score >= 60) return new THREE.Color("#8ab4ff");
   if (score >= 42) return new THREE.Color("#5eead4");
@@ -264,7 +268,13 @@ function scoreToThreeColor(score: number): THREE.Color {
   return new THREE.Color("#67e8f9");
 }
 
-function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySurface }) {
+function HermesVolatilityThreeSurface({
+  surface,
+  presentation
+}: {
+  surface: HermesVolatilitySurface;
+  presentation: SurfacePresentation;
+}) {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -306,6 +316,9 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
 
     const horizons = surface.horizonsMinutes;
     const dimensions = surface.dimensions;
+    const colorMode = presentation.colorMode ?? "default";
+    const warningRatio = presentation.warningRatio ?? 60;
+    const isTiltRiskSurface = colorMode === "tilt-risk";
     const xStep = 1.12;
     const zStep = 0.52;
     const yScale = 0.031;
@@ -327,6 +340,7 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
       };
     };
     const addVisualMicrostructure = (point: THREE.Vector3, sampleIndex: number, dimensionIndex: number, strength = 1) => {
+      if (isTiltRiskSurface) return point.clone();
       const waveA = Math.sin(sampleIndex * 0.31 + dimensionIndex * 1.17);
       const waveB = Math.cos(sampleIndex * 0.19 + dimensionIndex * 0.73);
       return new THREE.Vector3(
@@ -344,7 +358,7 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
       for (let h = 0; h < horizons.length; h += 1) {
         const p = pointPosition(h, d);
         positions.push(p.x, p.y, p.z);
-        const color = scoreToThreeColor(p.score);
+        const color = scoreToThreeColor(p.score, colorMode, warningRatio);
         colors.push(color.r, color.g, color.b);
       }
     }
@@ -447,7 +461,7 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
       const curve = new THREE.CatmullRomCurve3(curvePoints, false, "catmullrom", 0.42);
       const sampledPoints = curve.getPoints(108).map((point, index) => addVisualMicrostructure(point, index, dimensionIndex, 1));
       const averageScore = rawPoints.reduce((sum, point) => sum + point.score, 0) / Math.max(1, rawPoints.length);
-      const baseColor = scoreToThreeColor(averageScore);
+      const baseColor = scoreToThreeColor(averageScore, colorMode, warningRatio);
       const isHighlighted = highlightedDimensionIndexes.has(dimensionIndex);
 
       sampledPoints.forEach((point, index) => {
@@ -489,7 +503,7 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
         disposableGeometries.push(tubeGeometry);
         disposableMaterials.push(tubeMaterial);
 
-        [-1, 1].forEach((side) => {
+        (isTiltRiskSurface ? [] : [-1, 1]).forEach((side) => {
           const companionPoints = sampledPoints.map((point, index) => {
             const lift = Math.sin(index * 0.23 + dimensionIndex) * 0.08 + 0.12;
             return new THREE.Vector3(point.x, point.y + lift, point.z + side * 0.12);
@@ -565,7 +579,7 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
       );
       const sampledPoints = curve.getPoints(86);
       const averageScore = rawPoints.reduce((sum, point) => sum + point.score, 0) / Math.max(1, rawPoints.length);
-      const baseColor = scoreToThreeColor(averageScore).lerp(new THREE.Color("#7dd3fc"), 0.18);
+      const baseColor = scoreToThreeColor(averageScore, colorMode, warningRatio).lerp(new THREE.Color("#7dd3fc"), 0.18);
 
       if (horizonIndex === 0 || horizonIndex === Math.floor(horizons.length / 2) || horizonIndex === horizons.length - 1) {
         const slicePositions: number[] = [];
@@ -714,90 +728,151 @@ function HermesVolatilityThreeSurface({ surface }: { surface: HermesVolatilitySu
       disposableMaterials.forEach((item) => item.dispose());
       renderer.dispose();
     };
-  }, [surface]);
+  }, [presentation.colorMode, presentation.warningRatio, surface]);
 
   return (
     <div className="system-page-volatility-three-wrap">
       <div className="system-page-volatility-three-caption">
-        <strong>3D 端侧不稳定性曲面</strong>
-        <span>数值越高表示波动风险越高；红色不是健康高分，而是需要关注的高不稳定性。</span>
+        <strong>{presentation.captionTitle}</strong>
+        <span>{presentation.captionText}</span>
       </div>
       <div ref={mountRef} className="system-page-volatility-three" />
       <div className="system-page-volatility-three-legend" aria-label="3D 曲面图例">
         <span>
           <i className="system-page-volatility-legend-dot" />
-          采样点
+          {presentation.legendLabels[0]}
         </span>
         <span>
           <i className="system-page-volatility-legend-line" />
-          维度走势
+          {presentation.legendLabels[1]}
         </span>
         <span>
           <i className="system-page-volatility-legend-plane" />
-          窗口切片
+          {presentation.legendLabels[2]}
         </span>
       </div>
-      <div className="system-page-volatility-three-label system-page-volatility-three-label-x">X 复检时间窗</div>
-      <div className="system-page-volatility-three-label system-page-volatility-three-label-y">Y 链路维度</div>
-      <div className="system-page-volatility-three-label system-page-volatility-three-label-z">Z 不稳定性</div>
+      <div className="system-page-volatility-three-label system-page-volatility-three-label-x">{presentation.xAxisLabel}</div>
+      <div className="system-page-volatility-three-label system-page-volatility-three-label-y">{presentation.yAxisLabel}</div>
+      <div className="system-page-volatility-three-label system-page-volatility-three-label-z">{presentation.zAxisLabel}</div>
     </div>
   );
 }
 
-function HermesVolatilitySurfaceView({
-  surface,
-  stale
-}: {
-  surface: HermesVolatilitySurface | null | undefined;
-  stale?: boolean | null;
-}) {
-  if (stale) {
-    return <div className="system-page-edge-detail">端侧 AI 诊断待刷新</div>;
-  }
-  if (!surface || surface.dimensions.length < 2 || surface.horizonsMinutes.length < 2 || surface.points.length === 0) {
-    return <div className="system-page-edge-detail">端侧 AI 不稳定性曲面等待 Hermes API 数据。</div>;
+type RealtimeTiltRow = {
+  deviceId: string;
+  label: string;
+  updatedAt: string | null;
+  delta: { x: number; y: number; z: number };
+  maxAxis: "x" | "y" | "z";
+  maxDeviationDeg: number;
+};
+
+type RealtimeTiltSurfaceData = {
+  surface: HermesVolatilitySurface;
+  rows: RealtimeTiltRow[];
+  highDeg: number;
+  criticalDeg: number;
+  peak: RealtimeTiltRow;
+};
+
+function buildRealtimeTiltSurface(status: FieldAlarmStatus | null): RealtimeTiltSurfaceData | null {
+  const profile = status?.competitionProfile;
+  if (!profile?.enabled || !profile.live?.length || profile.thresholds.criticalDeg <= 0) return null;
+
+  const identityByDeviceId = new Map(profile.devices.map((device) => [device.deviceId, device]));
+  const rows = profile.live
+    .filter((item): item is typeof item & { deviation: NonNullable<typeof item.deviation> } => item.deviation != null)
+    .map((item) => {
+      const identity = identityByDeviceId.get(item.deviceId);
+      return {
+        deviceId: item.deviceId,
+        label: formatInstallLabelDisplay(identity?.deviceName ?? item.deviceId, item.deviceId),
+        updatedAt: item.updatedAt,
+        delta: item.deviation.delta,
+        maxAxis: item.deviation.maxAxis,
+        maxDeviationDeg: item.deviation.maxDeviationDeg
+      } satisfies RealtimeTiltRow;
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+  if (!rows.length) return null;
+
+  const axes = ["x", "y", "z"] as const;
+  const criticalDeg = profile.thresholds.criticalDeg;
+  const points = rows.flatMap((row) =>
+    axes.map((axis, axisIndex) => ({
+      horizonMinutes: axisIndex,
+      dimensionKey: row.deviceId,
+      volatilityScore: Math.min(140, (Math.abs(row.delta[axis]) / criticalDeg) * 100),
+      confidence: null,
+      diagnosisType: null,
+      driver: `${axis.toUpperCase()} 轴相对倾角基线偏移`
+    }))
+  );
+  const peak = rows.reduce((current, row) => (row.maxDeviationDeg > current.maxDeviationDeg ? row : current), rows[0]!);
+  const newestUpdatedAt = rows
+    .map((row) => row.updatedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? profile.updatedAt;
+
+  return {
+    rows,
+    highDeg: profile.thresholds.highDeg,
+    criticalDeg,
+    peak,
+    surface: {
+      generatedAt: newestUpdatedAt,
+      surfaceType: "edge_health_volatility_surface",
+      method: "realtime_competition_tilt_baseline_v1",
+      horizonsMinutes: [0, 1, 2],
+      dimensions: rows.map((row) => ({ key: row.deviceId, label: row.label, unit: "°" })),
+      points,
+      peakScore: Math.min(140, (peak.maxDeviationDeg / criticalDeg) * 100),
+      peakDimensionKey: peak.deviceId,
+      peakHorizonMinutes: axes.indexOf(peak.maxAxis),
+      modelConfidence: null,
+      note: "曲面只对 A/B/C 的真实 X/Y/Z 倾角偏移做连线展示；高度按严重阈值归一化，超过 140% 限幅，角度数值保持真实。"
+    }
+  };
+}
+
+function tiltRiskColor(value: number, highDeg: number, criticalDeg: number): string {
+  if (value >= criticalDeg) return "#ef4444";
+  if (value >= highDeg) return "#f97316";
+  return "#22d3ee";
+}
+
+function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | null }) {
+  if (!data) {
+    return (
+      <div className="system-page-edge-detail">
+        实时倾角形变曲面正在等待已启用的倾角告警基线与 A/B/C 实时姿态；页面不会使用模拟曲面补位。
+      </div>
+    );
   }
 
-  const peakDimension = surface.dimensions.find((dimension) => dimension.key === surface.peakDimensionKey);
-  const averageScore =
-    surface.points.length > 0
-      ? surface.points.reduce((sum, point) => sum + point.volatilityScore, 0) / surface.points.length
-      : 0;
-  const hotDimensions = surface.dimensions
-    .map((dimension) => {
-      const values = surface.horizonsMinutes
-        .map((horizon) => findSurfacePoint(surface, dimension.key, horizon)?.volatilityScore)
-        .filter((value): value is number => typeof value === "number");
-      const average = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-      return { dimension, average };
-    })
-    .sort((a, b) => b.average - a.average)
-    .slice(0, 3);
-  const scoreValues = surface.points.map((point) => point.volatilityScore);
-  const minScore = scoreValues.length > 0 ? Math.min(...scoreValues) : 0;
-  const maxScore = scoreValues.length > 0 ? Math.max(...scoreValues) : 0;
+  const warningRatio = Math.min(100, (data.highDeg / data.criticalDeg) * 100);
   const summaryCards = [
-    { label: "链路维度", value: `${surface.dimensions.length}`, note: "维度数量" },
-    { label: "复检窗口", value: `${surface.horizonsMinutes.length}`, note: surface.horizonsMinutes.map((item) => `${item}m`).join(" / ") },
-    { label: "平均波动", value: `${Math.round(averageScore)}`, note: volatilityLabel(averageScore) },
-    { label: "波动区间", value: `${Math.round(minScore)} - ${Math.round(maxScore)}`, note: "波动得分" },
-    { label: "峰值点", value: `${Math.round(surface.peakScore ?? maxScore)}`, note: `${surface.peakHorizonMinutes ?? "-"}min` }
+    { label: "真实节点", value: `${data.rows.length}`, note: "来自现场告警实时状态" },
+    { label: "峰值偏移", value: `${data.peak.maxDeviationDeg.toFixed(2)}°`, note: `${data.peak.label} · ${data.peak.maxAxis.toUpperCase()} 轴` },
+    { label: "高风险阈值", value: `${data.highDeg.toFixed(2)}°`, note: "达到后进入高风险" },
+    { label: "严重风险阈值", value: `${data.criticalDeg.toFixed(2)}°`, note: "达到后进入严重风险" },
+    { label: "最新姿态", value: formatTimestamp(data.surface.generatedAt), note: "A/B/C 最新有效时间" }
   ];
 
   return (
     <div className="system-page-volatility">
       <div className="system-page-volatility-head">
         <div>
-          <div className="system-page-panel-title">RK3568 端侧 AI 不稳定性曲面</div>
+          <div className="system-page-panel-title">A/B/C 实时倾角形变 3D 曲面</div>
           <div className="system-page-volatility-subtitle">
-            X=复检时间窗 · Y=链路维度 · Z=不稳定性得分。数值越高、颜色越暖，表示越需要关注。
+            X=倾角轴 · Y=正式分节点 · Z=相对人工倾角基线的绝对偏移。曲面与比赛倾角告警使用同一份实时业务证据。
           </div>
         </div>
         <Space size={8} wrap>
-          <Tag color={surface.peakScore != null && surface.peakScore >= 78 ? "red" : "orange"}>
-            峰值 {formatMetric(surface.peakScore)}
+          <Tag color={data.peak.maxDeviationDeg >= data.criticalDeg ? "red" : data.peak.maxDeviationDeg >= data.highDeg ? "orange" : "cyan"}>
+            峰值 {data.peak.maxDeviationDeg.toFixed(2)}°
           </Tag>
-          <Tag color="cyan">模型置信度 {surface.modelConfidence == null ? "-" : `${Math.round(surface.modelConfidence * 1000) / 10}%`}</Tag>
+          <Tag color="blue">基线相对偏移</Tag>
         </Space>
       </div>
 
@@ -806,7 +881,7 @@ function HermesVolatilitySurfaceView({
           <div key={item.label} className="system-page-volatility-summary-card">
             <span>{item.label}</span>
             <strong>{item.value}</strong>
-            <em>{item.note}</em>
+            <em title={item.note}>{item.note}</em>
           </div>
         ))}
       </div>
@@ -814,43 +889,107 @@ function HermesVolatilitySurfaceView({
       <div className="system-page-volatility-body">
         <div className="system-page-volatility-stage">
           <div className="system-page-volatility-chart-shell">
-            <HermesVolatilityThreeSurface surface={surface} />
+            <HermesVolatilityThreeSurface
+              surface={data.surface}
+              presentation={{
+                captionTitle: "真实倾角形变曲面",
+                captionText: "拖动旋转、滚轮缩放；曲面为真实离散点的可视化连线，精确角度以右侧读数为准。",
+                xAxisLabel: "X 倾角轴（X / Y / Z）",
+                yAxisLabel: "Y 正式分节点（A / B / C）",
+                zAxisLabel: "Z 相对基线偏移（°）",
+                legendLabels: ["真实姿态点", "节点轴向连线", "节点切片"],
+                colorMode: "tilt-risk",
+                warningRatio
+              }}
+            />
           </div>
         </div>
 
         <div className="system-page-volatility-side">
-          <div className="system-page-volatility-core">
-            <span>端侧 AI 平均波动</span>
-            <strong>{Math.round(averageScore)}</strong>
-            <em>{volatilityLabel(averageScore)}</em>
-          </div>
           <div className="system-page-volatility-peak">
-            <span>当前峰值维度</span>
-            <strong>{peakDimension?.label ?? "-"}</strong>
-            <em>
-              {formatMetric(surface.peakScore)} · {surface.peakHorizonMinutes ?? "-"}min · {volatilityLabel(surface.peakScore)}
-            </em>
+            <span>当前最大偏移</span>
+            <strong>{data.peak.label}</strong>
+            <em>{data.peak.maxAxis.toUpperCase()} 轴 · {data.peak.maxDeviationDeg.toFixed(3)}°</em>
           </div>
-          <div className="system-page-volatility-legend">
-            {[18, 38, 56, 72, 88].map((score) => (
-              <span key={score}>
-                <i style={{ background: volatilityColor(score) }} />
-                {score}
-              </span>
+          <div className="system-page-tilt-thresholds">
+            <span><i style={{ background: "#22d3ee" }} />正常区间<strong>&lt; {data.highDeg.toFixed(2)}°</strong></span>
+            <span><i style={{ background: "#f97316" }} />高风险<strong>≥ {data.highDeg.toFixed(2)}°</strong></span>
+            <span><i style={{ background: "#ef4444" }} />严重风险<strong>≥ {data.criticalDeg.toFixed(2)}°</strong></span>
+          </div>
+          <div className="system-page-tilt-readings">
+            {data.rows.map((row) => (
+              <div key={row.deviceId} className="system-page-tilt-reading">
+                <div>
+                  <span>{row.label}</span>
+                  <strong style={{ color: tiltRiskColor(row.maxDeviationDeg, data.highDeg, data.criticalDeg) }}>
+                    {row.maxDeviationDeg.toFixed(3)}°
+                  </strong>
+                </div>
+                <p>X {row.delta.x.toFixed(3)}° · Y {row.delta.y.toFixed(3)}° · Z {row.delta.z.toFixed(3)}°</p>
+                <em>{formatTimestamp(row.updatedAt)}</em>
+              </div>
             ))}
           </div>
-          <div className="system-page-volatility-hotlist">
-            {hotDimensions.map((item) => (
-              <span key={item.dimension.key}>
-                <i style={{ background: volatilityColor(item.average) }} />
-                {item.dimension.label}
-                <b>{Math.round(item.average)}</b>
-              </span>
-            ))}
-          </div>
-          <div className="system-page-volatility-note">{surface.note}</div>
+          <div className="system-page-volatility-note">{data.surface.note}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RegionalExpertRoutingView({ predictions }: { predictions: AiPrediction[] }) {
+  const candidates = predictions.map((prediction) => ({ prediction, evidence: extractAiRouteEvidence(prediction) }));
+  const selected = candidates.find((item) => item.evidence?.matchedModelKey) ?? candidates[0] ?? null;
+  const prediction = selected?.prediction ?? null;
+  const evidence = selected?.evidence ?? null;
+  const hasRouteEvidence = Boolean(evidence?.matchedModelKey);
+  const routeLocation = [evidence?.regionCode, evidence?.slopeCode, evidence?.stationCode].filter(Boolean).join(" / ");
+  const flow = [
+    { index: "01", label: "区域画像", value: routeLocation || "等待推理记录", note: "region / slope / station 定位" },
+    { index: "02", label: "候选专家池", value: evidence?.candidateCount == null ? "等待候选证据" : `${evidence.candidateCount} 个候选`, note: "四级作用域收集候选模型" },
+    { index: "03", label: "证据重排", value: regionalRerankLabel(evidence?.rerankMode), note: evidence?.selectedReason || "特征覆盖、样本与 Replay 共同排序" },
+    { index: "04", label: "运行专家", value: evidence?.matchedModelKey || "等待模型路由", note: `${regionalScopeLabel(evidence?.matchedScopeType)}${evidence?.matchedScopeKey ? ` · ${evidence.matchedScopeKey}` : ""}` }
+  ];
+
+  return (
+    <div className="system-page-regional-card">
+      <div className="system-page-hermes-head">
+        <div>
+          <div className="system-page-panel-title">云端区域专家路由</div>
+          <div className="system-page-hermes-title">区域画像 → 候选专家 → 证据重排 → 风险输出</div>
+          <div className="system-page-hermes-subtitle">独立于 RK3568 Hermes，使用 ai_predictions 中的真实运行证据解释“为什么选择这个专家”。</div>
+        </div>
+        <Space size={8} wrap>
+          <Tag color={hasRouteEvidence ? "green" : "default"}>{hasRouteEvidence ? "已有运行证据" : "等待推理记录"}</Tag>
+          {prediction ? <Tag color="cyan">风险 {prediction.riskLevel ?? "未分级"}</Tag> : null}
+        </Space>
+      </div>
+
+      <div className="system-page-expert-flow">
+        {flow.map((item, index) => (
+          <div key={item.index} className="system-page-expert-step">
+            <span>{item.index} · {item.label}</span>
+            <strong title={item.value}>{item.value}</strong>
+            <em title={item.note}>{item.note}</em>
+            {index < flow.length - 1 ? <b aria-hidden="true">→</b> : null}
+          </div>
+        ))}
+      </div>
+
+      {hasRouteEvidence ? (
+        <div className="system-page-regional-evidence">
+          <span>匹配分 <strong>{evidence?.matchScore == null ? "未上报" : evidence.matchScore.toFixed(3)}</strong></span>
+          <span>作用域 <strong>{regionalScopeLabel(evidence?.matchedScopeType)}</strong></span>
+          <span>特征完整 <strong>{boolLabel(evidence?.requiredFeaturesSatisfied)}</strong></span>
+          <span>运行时间 <strong>{formatTimestamp(evidence?.runAt)}</strong></span>
+          <span>回退原因 <strong>{evidence?.fallbackReason || "无"}</strong></span>
+          <span>缺失特征 <strong>{evidence?.missingFeatureKeys.length ? evidence.missingFeatureKeys.join("、") : "无"}</strong></span>
+        </div>
+      ) : (
+        <div className="system-page-edge-detail">
+          当前服务器尚未产生区域专家推理记录。本区保留真实路由流程，但不会用静态模型名或示例结果冒充已运行。
+        </div>
+      )}
     </div>
   );
 }
@@ -1181,6 +1320,7 @@ export function SystemPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [liveFieldEdge, setLiveFieldEdge] = useState<FieldEdgeStatus | null>(null);
   const [fieldAlarmStatus, setFieldAlarmStatus] = useState<FieldAlarmStatus | null>(null);
+  const [regionalPredictions, setRegionalPredictions] = useState<AiPrediction[]>([]);
   const [fieldAlarmBusy, setFieldAlarmBusy] = useState<"alarm_on" | "resolve" | null>(null);
   const [policyLoading, setPolicyLoading] = useState(true);
   const [policySaving, setPolicySaving] = useState(false);
@@ -1202,10 +1342,11 @@ export function SystemPage() {
     const silent = options?.silent ?? false;
     if (!silent) setLoading(true);
     try {
-      const [statusResult, deviceListResult, fieldAlarmResult] = await Promise.allSettled([
+      const [statusResult, deviceListResult, fieldAlarmResult, regionalPredictionResult] = await Promise.allSettled([
         api.system.getStatus(),
         api.devices.list(),
-        api.fieldAlarm.getStatus()
+        api.fieldAlarm.getStatus(),
+        api.aiPredictions.list({ page: 1, pageSize: 200 })
       ]);
       if (statusResult.status === "fulfilled") {
         setStatus(statusResult.value);
@@ -1235,6 +1376,12 @@ export function SystemPage() {
         setFieldAlarmStatus(fieldAlarmResult.value);
       } else {
         setFieldAlarmStatus(null);
+      }
+
+      if (regionalPredictionResult.status === "fulfilled") {
+        setRegionalPredictions(regionalPredictionResult.value.list);
+      } else {
+        setRegionalPredictions([]);
       }
 
       if (!silent && statusResult.status === "rejected" && deviceListResult.status === "rejected" && fieldAlarmResult.status === "rejected") {
@@ -1341,6 +1488,7 @@ export function SystemPage() {
     hermesCurrent?.safetyGatewayCoreTouched === false &&
     hermesCurrent.safetySerialTouched === false &&
     hermesCurrent.safetyMqttTouched === false;
+  const realtimeTiltSurface = useMemo(() => buildRealtimeTiltSurface(fieldAlarmStatus), [fieldAlarmStatus]);
   const systemHealthy =
     serviceItems.length > 0 &&
     serviceHealthyCount === serviceItems.length &&
@@ -1827,13 +1975,25 @@ export function SystemPage() {
                   </div>
                 </div>
 
-                {hermesCurrent.volatilitySurface?.method.startsWith("derived_") ? (
-                  <div className="system-page-edge-detail">
-                    当前接口未提供实测时间序列，波动曲面不作为实时监控指标展示。
+                <div className="system-page-agent-architecture" aria-label="RK3568 Hermes 边缘架构">
+                  <div>
+                    <span>01 · field-gateway</span>
+                    <strong>采集 / Spool / MQTT</strong>
+                    <em>保持主数据链路独立运行</em>
                   </div>
-                ) : (
-                  <HermesVolatilitySurfaceView surface={hermesCurrent.volatilitySurface} stale={false} />
-                )}
+                  <b aria-hidden="true">→</b>
+                  <div>
+                    <span>02 · field-link-monitor</span>
+                    <strong>只读链路质量摘要</strong>
+                    <em>串口、节点、发布与资源证据</em>
+                  </div>
+                  <b aria-hidden="true">→</b>
+                  <div>
+                    <span>03 · Hermes supervisor</span>
+                    <strong>64 特征边缘诊断</strong>
+                    <em>安全复检，不接管串口与 MQTT</em>
+                  </div>
+                </div>
 
                 <div className="system-page-hermes-boundary">
                   <span>网关主流程触碰 {boolLabel(hermesCurrent.safetyGatewayCoreTouched)}</span>
@@ -1911,6 +2071,19 @@ export function SystemPage() {
           </div>
         )}
       </BaseCard>
+
+      <div className="system-page-spacer" />
+
+      <div className="system-page-section-head">
+        <div>
+          <div className="system-page-section-title">现场形变与专家路由</div>
+          <div className="system-page-section-desc">倾角曲面使用 A/B/C 真实姿态；区域专家只展示云端实际推理与路由证据。</div>
+        </div>
+      </div>
+
+      <TiltBusinessSurfaceView data={realtimeTiltSurface} />
+      <div className="system-page-spacer" />
+      <RegionalExpertRoutingView predictions={regionalPredictions} />
 
       <div className="system-page-spacer" />
 

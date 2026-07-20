@@ -837,7 +837,7 @@ export function AnalysisPage() {
   const [conductivityTrendLoading, setConductivityTrendLoading] = useState(false);
   const [tiltTrendGroups, setTiltTrendGroups] = useState<TiltTrendGroup[]>([]);
   const [tiltTrendLoading, setTiltTrendLoading] = useState(false);
-  const [mapBottomMode, setMapBottomMode] = useState<MapBottomMode>("realtime");
+  const [mapBottomMode, setMapBottomMode] = useState<MapBottomMode>("history");
   const [historyMetricKey, setHistoryMetricKey] = useState<HistoryMetricKey>("tilt_x_deg");
   const [historyRange, setHistoryRange] = useState<HistoryRangeKey>("24h");
   const [realtimeTrendRange, setRealtimeTrendRange] = useState<RealtimeTrendRangeKey>("24h");

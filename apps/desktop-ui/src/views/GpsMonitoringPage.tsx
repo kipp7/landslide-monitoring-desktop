@@ -27,6 +27,7 @@ import type { AiPrediction, Baseline, Device, GpsDerivedAnalysis, GpsSeries, Tel
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { GpsCoordinateMap } from "../components/GpsCoordinateMap";
+import { extractAiRouteEvidence, regionalRerankLabel, regionalScopeLabel } from "../utils/aiPredictionEvidence";
 import { formatBeijingDateTime, formatBeijingMonthDay, formatBeijingMonthDayTime, formatBeijingTime } from "../utils/beijingTime";
 import { isFormalGnssDevice } from "../utils/deviceCapabilities";
 import { buildGpsAnalysisExport, buildGpsChartExport, buildGpsCsvExport, buildGpsReportExport, triggerPreparedExport } from "./gpsMonitoringExport";
@@ -554,7 +555,7 @@ export function GpsMonitoringPage() {
         api.aiPredictions
           .list({
             page: 1,
-            pageSize: 1,
+            pageSize: 20,
             deviceId: selectedDeviceId
           })
           .catch(() => null)
@@ -563,7 +564,11 @@ export function GpsMonitoringPage() {
       setDerivedAnalysis(nextDerivedAnalysis);
       setTemperatureSeries(temperature);
       setHumiditySeries(humidity);
-      setLatestAiPrediction(aiPredictionResult?.list[0] ?? null);
+      setLatestAiPrediction(
+        aiPredictionResult?.list.find((prediction) => extractAiRouteEvidence(prediction)?.matchedModelKey) ??
+          aiPredictionResult?.list[0] ??
+          null
+      );
       setTemporaryReferencePoint(nextTemporaryReferencePoint);
       setGpsNotice(nextNotice);
       setLastUpdateTime(formatBeijingDateTime(new Date()));
@@ -673,6 +678,7 @@ export function GpsMonitoringPage() {
   const displacementLabel = baseline ? "最新位移（持久基线）" : referencePoint ? "最新位移（临时参考）" : "最新位移";
   const referenceStatusText = baseline ? "持久基线已建立" : referencePoint ? "临时参考点" : "未形成参考点";
   const forecastInference = latestAiPrediction?.forecastInference ?? null;
+  const aiRouteEvidence = extractAiRouteEvidence(latestAiPrediction);
   const riskCalibration = latestAiPrediction?.riskCalibration ?? null;
   const forecastRunStatus = forecastRunStatusText(forecastInference);
   const trendDiagnostics = derivedAnalysis?.trendDiagnostics ?? null;
@@ -1576,6 +1582,26 @@ export function GpsMonitoringPage() {
                           </div>
                           <div className="desk-gps-forecast-sub" title={forecastInference?.modelKey ?? undefined}>
                             {forecastInference?.modelVersion ? `版本 ${forecastInference.modelVersion}` : "暂无版本信息"}
+                          </div>
+                        </div>
+                        <div className="desk-gps-forecast-card">
+                          <div className="desk-gps-forecast-k">区域专家</div>
+                          <div className="desk-gps-forecast-v">
+                            {aiRouteEvidence?.matchedModelKey ? regionalScopeLabel(aiRouteEvidence.matchedScopeType) : "等待路由"}
+                          </div>
+                          <div className="desk-gps-forecast-sub" title={aiRouteEvidence?.matchedModelKey ?? undefined}>
+                            {aiRouteEvidence?.matchedModelKey ?? "尚无区域专家推理记录"}
+                          </div>
+                        </div>
+                        <div className="desk-gps-forecast-card">
+                          <div className="desk-gps-forecast-k">路由证据</div>
+                          <div className="desk-gps-forecast-v">
+                            {aiRouteEvidence?.candidateCount == null ? "--" : `${aiRouteEvidence.candidateCount} 个候选`}
+                          </div>
+                          <div className="desk-gps-forecast-sub">
+                            {aiRouteEvidence?.matchedModelKey
+                              ? `匹配分 ${aiRouteEvidence.matchScore == null ? "未上报" : aiRouteEvidence.matchScore.toFixed(3)} · ${regionalRerankLabel(aiRouteEvidence.rerankMode)}`
+                              : "等待 ai_predictions 返回匹配与重排证据"}
                           </div>
                         </div>
                         <div className="desk-gps-forecast-card">
