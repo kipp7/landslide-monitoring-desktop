@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type {
-  AiPrediction,
   CommandSuccessNotificationPolicyConfig,
   CompetitionTiltProfile,
   Device,
@@ -18,7 +17,6 @@ import type {
 } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
-import { extractAiRouteEvidence, regionalRerankLabel, regionalScopeLabel } from "../utils/aiPredictionEvidence";
 import { formatInstallLabelDisplay } from "../utils/fieldIdentityDisplay";
 import { formatBeijingDateTime } from "../utils/beijingTime";
 
@@ -1009,7 +1007,7 @@ function HermesVolatilityThreeSurface({
     <div className="system-page-volatility-three-wrap">
       <div className="system-page-volatility-three-caption">
         <strong>{presentation.captionTitle}</strong>
-        <span>{presentation.captionText}</span>
+        {presentation.captionText ? <span>{presentation.captionText}</span> : null}
       </div>
       <div ref={mountRef} className="system-page-volatility-three" />
       <div className="system-page-volatility-three-legend" aria-label="3D 曲面图例">
@@ -1222,7 +1220,7 @@ function buildRealtimeTiltSurface(
         peakDimensionKey,
         peakHorizonMinutes,
         modelConfidence: null,
-        note: `曲面使用最近 ${sampleFrameCount} 轮、${points.length} 个真实倾角历史点；同轮通道按真实时间戳在 2.5 秒内匹配，曲面只在真实点之间插值，不补模拟测值。`
+        note: `最近 ${sampleFrameCount} 轮、${points.length} 个倾角历史点。`
       }
     };
   }
@@ -1293,8 +1291,8 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
           <div className="system-page-panel-title">A/B/C 倾角时序 3D 曲面</div>
           <div className="system-page-volatility-subtitle">
             {isTimeline
-              ? "X=最近 60 秒采样时间 · Y=A/B/C 的 X/Y/Z 真实通道 · Z=相对倾角基线的绝对偏移。"
-              : "历史点不足时显示当前快照：X=倾角轴 · Y=正式分节点 · Z=相对倾角基线的绝对偏移。"}
+              ? "沿 X 看时间，沿 Y 找节点和倾角轴，沿 Z 看偏离基线的高度；全部来自 A/B/C 真实上报。"
+              : "历史点不足时显示当前快照：沿 X 找倾角轴，沿 Y 找节点，沿 Z 看偏离基线的高度。"}
           </div>
         </div>
         <Space size={8} wrap>
@@ -1323,9 +1321,7 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
               surface={data.surface}
               presentation={{
                 captionTitle: isTimeline ? "最近 60 秒真实倾角时序" : "当前真实倾角快照",
-                captionText: isTimeline
-                  ? "拖动旋转、滚轮缩放；发光点均为云端历史实测，连续曲面只连接真实点。"
-                  : "历史点不足时显示当前实测姿态；发光点为真实快照，连续曲面只连接真实点。",
+                captionText: "",
                 xAxisLabel: isTimeline ? "X 采样时间（旧 → 新）" : "X 倾角轴（X / Y / Z）",
                 yAxisLabel: isTimeline ? "Y 分节点 × 倾角轴" : "Y 正式分节点（A / B / C）",
                 zAxisLabel: "Z 相对基线偏移（°）",
@@ -1334,6 +1330,12 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
                 warningRatio
               }}
             />
+          </div>
+          <div className="system-page-surface-guide" aria-label="3D 曲面读图说明">
+            <div className="system-page-surface-guide-axis is-x"><b>X</b><span>采样时间</span><em>旧 → 新</em></div>
+            <div className="system-page-surface-guide-axis is-y"><b>Y</b><span>节点 × 倾角轴</span><em>A/B/C · X/Y/Z</em></div>
+            <div className="system-page-surface-guide-axis is-z"><b>Z</b><span>相对基线偏移</span><em>越高，偏移越大</em></div>
+            <p><strong>读图：</strong>先沿 Y 找到目标通道，再沿 X 看它最近 60 秒的变化，最后用 Z 高度和颜色判断风险等级。</p>
           </div>
         </div>
 
@@ -1362,66 +1364,8 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
               </div>
             ))}
           </div>
-          <div className="system-page-volatility-note">{data.surface.note}</div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function RegionalExpertRoutingView({ predictions }: { predictions: AiPrediction[] }) {
-  const candidates = predictions.map((prediction) => ({ prediction, evidence: extractAiRouteEvidence(prediction) }));
-  const selected = candidates.find((item) => item.evidence?.matchedModelKey) ?? candidates[0] ?? null;
-  const prediction = selected?.prediction ?? null;
-  const evidence = selected?.evidence ?? null;
-  const hasRouteEvidence = Boolean(evidence?.matchedModelKey);
-  const routeLocation = [evidence?.regionCode, evidence?.slopeCode, evidence?.stationCode].filter(Boolean).join(" / ");
-  const flow = [
-    { index: "01", label: "区域画像", value: routeLocation || "等待推理记录", note: "region / slope / station 定位" },
-    { index: "02", label: "候选专家池", value: evidence?.candidateCount == null ? "等待候选证据" : `${evidence.candidateCount} 个候选`, note: "四级作用域收集候选模型" },
-    { index: "03", label: "证据重排", value: regionalRerankLabel(evidence?.rerankMode), note: evidence?.selectedReason || "特征覆盖、样本与 Replay 共同排序" },
-    { index: "04", label: "运行专家", value: evidence?.matchedModelKey || "等待模型路由", note: `${regionalScopeLabel(evidence?.matchedScopeType)}${evidence?.matchedScopeKey ? ` · ${evidence.matchedScopeKey}` : ""}` }
-  ];
-
-  return (
-    <div className="system-page-regional-card">
-      <div className="system-page-hermes-head">
-        <div>
-          <div className="system-page-panel-title">云端区域专家路由</div>
-          <div className="system-page-hermes-title">区域画像 → 候选专家 → 证据重排 → 风险输出</div>
-          <div className="system-page-hermes-subtitle">独立于 RK3568 Hermes，使用 ai_predictions 中的真实运行证据解释“为什么选择这个专家”。</div>
-        </div>
-        <Space size={8} wrap>
-          <Tag color={hasRouteEvidence ? "green" : "default"}>{hasRouteEvidence ? "已有运行证据" : "等待推理记录"}</Tag>
-          {prediction ? <Tag color="cyan">风险 {prediction.riskLevel ?? "未分级"}</Tag> : null}
-        </Space>
-      </div>
-
-      <div className="system-page-expert-flow">
-        {flow.map((item, index) => (
-          <div key={item.index} className="system-page-expert-step">
-            <span>{item.index} · {item.label}</span>
-            <strong title={item.value}>{item.value}</strong>
-            <em title={item.note}>{item.note}</em>
-            {index < flow.length - 1 ? <b aria-hidden="true">→</b> : null}
-          </div>
-        ))}
-      </div>
-
-      {hasRouteEvidence ? (
-        <div className="system-page-regional-evidence">
-          <span>匹配分 <strong>{evidence?.matchScore == null ? "未上报" : evidence.matchScore.toFixed(3)}</strong></span>
-          <span>作用域 <strong>{regionalScopeLabel(evidence?.matchedScopeType)}</strong></span>
-          <span>特征完整 <strong>{boolLabel(evidence?.requiredFeaturesSatisfied)}</strong></span>
-          <span>运行时间 <strong>{formatTimestamp(evidence?.runAt)}</strong></span>
-          <span>回退原因 <strong>{evidence?.fallbackReason || "无"}</strong></span>
-          <span>缺失特征 <strong>{evidence?.missingFeatureKeys.length ? evidence.missingFeatureKeys.join("、") : "无"}</strong></span>
-        </div>
-      ) : (
-        <div className="system-page-edge-detail">
-          当前服务器尚未产生区域专家推理记录。本区保留真实路由流程，但不会用静态模型名或示例结果冒充已运行。
-        </div>
-      )}
     </div>
   );
 }
@@ -1753,7 +1697,6 @@ export function SystemPage() {
   const [liveFieldEdge, setLiveFieldEdge] = useState<FieldEdgeStatus | null>(null);
   const [fieldAlarmStatus, setFieldAlarmStatus] = useState<FieldAlarmStatus | null>(null);
   const [tiltHistoryRows, setTiltHistoryRows] = useState<RealtimeTiltHistoryRow[]>([]);
-  const [regionalPredictions, setRegionalPredictions] = useState<AiPrediction[]>([]);
   const [fieldAlarmBusy, setFieldAlarmBusy] = useState<"alarm_on" | "resolve" | null>(null);
   const [policyLoading, setPolicyLoading] = useState(true);
   const [policySaving, setPolicySaving] = useState(false);
@@ -1775,11 +1718,10 @@ export function SystemPage() {
     const silent = options?.silent ?? false;
     if (!silent) setLoading(true);
     try {
-      const [statusResult, deviceListResult, fieldAlarmResult, regionalPredictionResult] = await Promise.allSettled([
+      const [statusResult, deviceListResult, fieldAlarmResult] = await Promise.allSettled([
         api.system.getStatus(),
         api.devices.list(),
-        api.fieldAlarm.getStatus(),
-        api.aiPredictions.list({ page: 1, pageSize: 200 })
+        api.fieldAlarm.getStatus()
       ]);
       if (statusResult.status === "fulfilled") {
         setStatus(statusResult.value);
@@ -1809,12 +1751,6 @@ export function SystemPage() {
         setFieldAlarmStatus(fieldAlarmResult.value);
       } else {
         setFieldAlarmStatus(null);
-      }
-
-      if (regionalPredictionResult.status === "fulfilled") {
-        setRegionalPredictions(regionalPredictionResult.value.list);
-      } else {
-        setRegionalPredictions([]);
       }
 
       if (!silent && statusResult.status === "rejected" && deviceListResult.status === "rejected" && fieldAlarmResult.status === "rejected") {
@@ -1984,6 +1920,12 @@ export function SystemPage() {
     hermesCurrent?.safetyGatewayCoreTouched === false &&
     hermesCurrent.safetySerialTouched === false &&
     hermesCurrent.safetyMqttTouched === false;
+  const hermesSafetyReported =
+    typeof hermesCurrent?.safetyGatewayCoreTouched === "boolean" &&
+    typeof hermesCurrent.safetySerialTouched === "boolean" &&
+    typeof hermesCurrent.safetyMqttTouched === "boolean";
+  const hermesActionRecheckReported =
+    hermesCurrent?.actionRecheckStatus != null || hermesCurrent?.actionRecheckAccepted != null;
   const realtimeTiltSurface = useMemo(
     () => buildRealtimeTiltSurface(fieldAlarmStatus, tiltHistoryRows),
     [fieldAlarmStatus, tiltHistoryRows]
@@ -2437,7 +2379,9 @@ export function SystemPage() {
                     {hermesDiagnosisTag(hermesCurrent.diagnosisType, hermesCurrent.confidenceLevel)}
                     <Tag color={hermesCurrent.serviceActive ? "green" : "default"}>服务 {hermesCurrent.serviceActive ? "运行中" : "待确认"}</Tag>
                     <Tag color={hermesCurrent.modelLoaded ? "cyan" : "default"}>模型 {hermesCurrent.modelLoaded ? "已加载" : "未加载"}</Tag>
-                    <Tag color={hermesSafetyOk ? "green" : "orange"}>主链路保护 {hermesSafetyOk ? "通过" : "待确认"}</Tag>
+                    {hermesSafetyReported ? (
+                      <Tag color={hermesSafetyOk ? "green" : "orange"}>主链路保护 {hermesSafetyOk ? "通过" : "异常"}</Tag>
+                    ) : null}
                   </Space>
                 </div>
 
@@ -2462,11 +2406,13 @@ export function SystemPage() {
                     <strong>{boolLabel(hermesCurrent.naturalLanguageReady)}</strong>
                     <em>意图数 {formatMetric(hermesCurrent.intentCount)}</em>
                   </div>
-                  <div className="system-page-hermes-metric">
-                    <span>安全复检</span>
-                    <strong>{actionStatusLabel(hermesCurrent.actionRecheckStatus)}</strong>
-                    <em>复检接纳 {boolLabel(hermesCurrent.actionRecheckAccepted)}</em>
-                  </div>
+                  {hermesActionRecheckReported ? (
+                    <div className="system-page-hermes-metric">
+                      <span>安全复检</span>
+                      <strong>{actionStatusLabel(hermesCurrent.actionRecheckStatus)}</strong>
+                      <em>复检接纳 {boolLabel(hermesCurrent.actionRecheckAccepted)}</em>
+                    </div>
+                  ) : null}
                   <div className="system-page-hermes-metric">
                     <span>运行验收</span>
                     <strong>{boolLabel(hermesCurrent.accepted)}</strong>
@@ -2474,31 +2420,10 @@ export function SystemPage() {
                   </div>
                 </div>
 
-                <div className="system-page-agent-architecture" aria-label="RK3568 Hermes 边缘架构">
-                  <div>
-                    <span>01 · field-gateway</span>
-                    <strong>采集 / Spool / MQTT</strong>
-                    <em>保持主数据链路独立运行</em>
-                  </div>
-                  <b aria-hidden="true">→</b>
-                  <div>
-                    <span>02 · field-link-monitor</span>
-                    <strong>只读链路质量摘要</strong>
-                    <em>串口、节点、发布与资源证据</em>
-                  </div>
-                  <b aria-hidden="true">→</b>
-                  <div>
-                    <span>03 · Hermes supervisor</span>
-                    <strong>64 特征边缘诊断</strong>
-                    <em>安全复检，不接管串口与 MQTT</em>
-                  </div>
-                </div>
-
-                <div className="system-page-hermes-boundary">
-                  <span>网关主流程触碰 {boolLabel(hermesCurrent.safetyGatewayCoreTouched)}</span>
-                  <span>串口链路触碰 {boolLabel(hermesCurrent.safetySerialTouched)}</span>
-                  <span>MQTT 链路触碰 {boolLabel(hermesCurrent.safetyMqttTouched)}</span>
-                  <span>板端主机 {hermesCurrent.boardHost ?? "未上报"}</span>
+                <div className="system-page-hermes-source">
+                  <span>端侧职责</span>
+                  <strong>只读链路诊断，不接管采集、串口或 MQTT 主流程</strong>
+                  {hermesCurrent.boardHost ? <em>状态源地址 {hermesCurrent.boardHost}</em> : null}
                 </div>
               </div>
             ) : (
@@ -2575,14 +2500,12 @@ export function SystemPage() {
 
       <div className="system-page-section-head">
         <div>
-          <div className="system-page-section-title">现场形变与专家路由</div>
-          <div className="system-page-section-desc">倾角曲面使用 A/B/C 真实姿态；区域专家只展示云端实际推理与路由证据。</div>
+          <div className="system-page-section-title">现场形变</div>
+          <div className="system-page-section-desc">倾角曲面使用 A/B/C 真实姿态；只展示已从现场和云端返回的证据。</div>
         </div>
       </div>
 
       <TiltBusinessSurfaceView data={realtimeTiltSurface} />
-      <div className="system-page-spacer" />
-      <RegionalExpertRoutingView predictions={regionalPredictions} />
 
       <div className="system-page-spacer" />
 
