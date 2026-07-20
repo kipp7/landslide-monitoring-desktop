@@ -27,6 +27,7 @@ import type { AiPrediction, Baseline, Device, GpsDerivedAnalysis, GpsSeries, Tel
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { formatBeijingDateTime, formatBeijingMonthDay, formatBeijingMonthDayTime, formatBeijingTime } from "../utils/beijingTime";
+import { isFormalGnssDevice } from "../utils/deviceCapabilities";
 import { buildGpsAnalysisExport, buildGpsChartExport, buildGpsCsvExport, buildGpsReportExport, triggerPreparedExport } from "./gpsMonitoringExport";
 import "./gpsMonitoring.css";
 
@@ -222,14 +223,6 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
   return 2 * radius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-function normalizeIdentityClass(value?: string | null): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function isFormalIdentityClass(value?: string | null): boolean {
-  return normalizeIdentityClass(value) === "formal";
-}
-
 function isBaselineMissingError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
@@ -261,12 +254,43 @@ function buildRawGpsSeriesFromTelemetry(
     rows.set(point.ts, entry);
   }
 
-  const ordered = Array.from(rows.entries())
+  const coordinateRows = Array.from(rows.entries())
     .filter((entry): entry is [string, { lat: number; lng: number }] => {
       const value = entry[1];
-      return typeof value.lat === "number" && Number.isFinite(value.lat) && typeof value.lng === "number" && Number.isFinite(value.lng);
+      return (
+        typeof value.lat === "number" &&
+        Number.isFinite(value.lat) &&
+        typeof value.lng === "number" &&
+        Number.isFinite(value.lng) &&
+        Math.abs(value.lat) > 0.0001 &&
+        Math.abs(value.lng) > 0.0001 &&
+        Math.abs(value.lat) <= 90 &&
+        Math.abs(value.lng) <= 180
+      );
     })
     .sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
+
+  let ordered = coordinateRows;
+  if (coordinateRows.length >= 3) {
+    const maxClusterDistanceMeters = 100;
+    let clusterSeed = coordinateRows[0]!;
+    let clusterSize = 0;
+
+    for (const candidate of coordinateRows) {
+      const candidateSize = coordinateRows.filter(
+        (point) => haversineMeters(candidate[1].lat, candidate[1].lng, point[1].lat, point[1].lng) <= maxClusterDistanceMeters
+      ).length;
+      if (candidateSize > clusterSize) {
+        clusterSeed = candidate;
+        clusterSize = candidateSize;
+      }
+    }
+
+    const dominantCluster = coordinateRows.filter(
+      (point) => haversineMeters(clusterSeed[1].lat, clusterSeed[1].lng, point[1].lat, point[1].lng) <= maxClusterDistanceMeters
+    );
+    if (dominantCluster.length >= 2) ordered = dominantCluster;
+  }
 
   if (!ordered.length) {
     return {
@@ -392,9 +416,7 @@ export function GpsMonitoringPage() {
       try {
         const [deviceList, baselineList] = await Promise.all([api.devices.list(), api.baselines.list()]);
         if (abort.signal.aborted) return;
-        const gnssCandidates = deviceList.filter((d) => d.type === "gnss");
-        const formalGnss = gnssCandidates.filter((d) => isFormalIdentityClass(d.identityClass));
-        const gnss = formalGnss.length > 0 ? formalGnss : gnssCandidates;
+        const gnss = deviceList.filter(isFormalGnssDevice);
         setDevices(gnss);
         setBaselines(baselineList);
         setSelectedDeviceId((prev) => (prev && gnss.some((device) => device.id === prev) ? prev : gnss[0]?.id || ""));
@@ -451,20 +473,7 @@ export function GpsMonitoringPage() {
       let nextTemporaryReferencePoint: GpsReferencePoint | null = null;
       let nextNotice: string | null = null;
 
-      try {
-        nextSeries = await api.gps.getSeries({ deviceId: selectedDeviceId, days });
-        try {
-          nextDerivedAnalysis = await api.gps.getDerivedAnalysis({ deviceId: selectedDeviceId, rangeLabel: timeRange, limit: dataLimit });
-        } catch (analysisError) {
-          nextNotice = isBaselineMissingError(analysisError)
-            ? "当前设备尚未建立持久基线，分析页已退化为实时坐标视图。"
-            : `形变分析暂不可用：${analysisError instanceof Error ? analysisError.message : String(analysisError)}`;
-        }
-      } catch (seriesError) {
-        if (!isBaselineMissingError(seriesError)) {
-          throw seriesError;
-        }
-
+      const loadRawGpsSeries = async () => {
         const [latSeries, lngSeries] = await Promise.all([
           api.telemetry.getSeries({
             deviceId: selectedDeviceId,
@@ -481,13 +490,39 @@ export function GpsMonitoringPage() {
             interval: telemetryWindow.interval
           })
         ]);
+        return buildRawGpsSeriesFromTelemetry(selectedDeviceId, latSeries, lngSeries);
+      };
 
-        const rawGps = buildRawGpsSeriesFromTelemetry(selectedDeviceId, latSeries, lngSeries);
+      try {
+        nextSeries = await api.gps.getSeries({ deviceId: selectedDeviceId, days });
+        if (!nextSeries.points.length) {
+          const rawGps = await loadRawGpsSeries();
+          nextSeries = rawGps.series;
+          nextTemporaryReferencePoint = rawGps.referencePoint;
+          nextNotice = rawGps.referencePoint
+            ? "当前窗口已加载设备真实定位数据，并按有效坐标生成临时参考点。"
+            : "当前窗口没有可用定位坐标数据。";
+        }
+        try {
+          nextDerivedAnalysis = await api.gps.getDerivedAnalysis({ deviceId: selectedDeviceId, rangeLabel: timeRange, limit: dataLimit });
+        } catch (analysisError) {
+          nextNotice = isBaselineMissingError(analysisError)
+            ? "当前设备尚未建立持久基线，分析页已退化为实时坐标视图。"
+            : `形变分析暂不可用：${analysisError instanceof Error ? analysisError.message : String(analysisError)}`;
+        }
+      } catch (seriesError) {
+        const rawGps = await loadRawGpsSeries();
         nextSeries = rawGps.series;
         nextTemporaryReferencePoint = rawGps.referencePoint;
-        nextNotice = rawGps.referencePoint
-          ? "当前设备尚未建立持久基线，页面已按实时坐标自动生成临时参考点，仅用于当前窗口查看。"
-          : "当前设备尚未建立持久基线，且当前窗口没有可用定位坐标数据。";
+        if (isBaselineMissingError(seriesError)) {
+          nextNotice = rawGps.referencePoint
+            ? "当前设备尚未建立持久基线，页面已按真实定位数据生成临时参考点。"
+            : "当前设备尚未建立持久基线，且当前窗口没有可用定位坐标数据。";
+        } else {
+          nextNotice = rawGps.referencePoint
+            ? "形变分析接口暂不可用，页面已切换为设备真实定位数据。"
+            : `形变数据暂不可用：${seriesError instanceof Error ? seriesError.message : String(seriesError)}`;
+        }
       }
 
       const [temperature, humidity, aiPredictionResult] = await Promise.all([
