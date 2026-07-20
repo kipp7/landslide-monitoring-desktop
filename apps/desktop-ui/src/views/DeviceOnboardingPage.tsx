@@ -200,7 +200,7 @@ export function DeviceOnboardingPage() {
   const [newStationSlopeCode, setNewStationSlopeCode] = useState<string>("");
   const [newStationLocationName, setNewStationLocationName] = useState<string>("");
   const [newStationGatewayCode, setNewStationGatewayCode] = useState<string>("");
-  const [newStationRiskLevel, setNewStationRiskLevel] = useState<"low" | "mid" | "high">("low");
+  const [newStationRiskLevel, setNewStationRiskLevel] = useState<"low" | "mid" | "high" | undefined>(undefined);
   const [bindingSubmitting, setBindingSubmitting] = useState(false);
   const [rebindSubmitting, setRebindSubmitting] = useState(false);
   const [commissioningSubmitting, setCommissioningSubmitting] = useState(false);
@@ -299,7 +299,7 @@ export function DeviceOnboardingPage() {
       setNewStationSlopeCode("");
       setNewStationLocationName("");
       setNewStationGatewayCode("");
-      setNewStationRiskLevel("low");
+      setNewStationRiskLevel(undefined);
       return;
     }
 
@@ -315,7 +315,7 @@ export function DeviceOnboardingPage() {
     setNewStationSlopeCode("");
     setNewStationLocationName("");
     setNewStationGatewayCode(selectedPending.gatewayCode ?? "");
-    setNewStationRiskLevel("low");
+    setNewStationRiskLevel(undefined);
   }, [selectedPending?.deviceId, stations.length]);
 
   useEffect(() => {
@@ -465,7 +465,8 @@ export function DeviceOnboardingPage() {
         normalizedNewStationName &&
         normalizedNewStationDisplayName &&
         normalizedNewStationRegionCode &&
-        normalizedNewStationSlopeCode)
+        normalizedNewStationSlopeCode &&
+        newStationRiskLevel)
   );
 
   const newStationPreviewName = normalizedNewStationDisplayName || normalizedNewStationName || "—";
@@ -501,7 +502,7 @@ export function DeviceOnboardingPage() {
                   ? { locationName: newStationLocationName.trim() }
                   : {}),
                 ...(resolvedBindingGatewayCode ? { gatewayCode: resolvedBindingGatewayCode } : {}),
-                riskLevel: newStationRiskLevel,
+                riskLevel: newStationRiskLevel!,
               },
             }),
         deviceName: selectedPending.runtimeName,
@@ -1005,6 +1006,7 @@ export function DeviceOnboardingPage() {
                         <label>风险等级</label>
                         <Select
                           value={newStationRiskLevel}
+                          placeholder="请选择风险等级"
                           onChange={(value) => setNewStationRiskLevel(value)}
                           options={[
                             { value: "low", label: "低" },

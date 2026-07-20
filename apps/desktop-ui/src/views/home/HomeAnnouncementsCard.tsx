@@ -128,7 +128,7 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
       <BaseCard
         title={
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <BellOutlined /> 系统公告
+            <BellOutlined /> 现场公告（本机）
           </span>
         }
         extra={

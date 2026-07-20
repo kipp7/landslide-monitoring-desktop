@@ -1,12 +1,16 @@
 import "leaflet/dist/leaflet.css";
 
 import L from "leaflet";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, Marker, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 
 import type { Station } from "../api/client";
 
 type BaseLayer = "2D" | "卫星图";
+type TileProvider = "tianditu" | "esri";
+
+const LEGACY_PUBLIC_TDT_KEY = "cc688e28c157fc3473807854c945f375";
+const TDT_TILE_ERROR_THRESHOLD = 4;
 
 export type StationMapMetrics = {
   deviceOnline: number;
@@ -16,9 +20,24 @@ export type StationMapMetrics = {
   types?: Partial<Record<"gnss" | "rain" | "tilt" | "temp_hum" | "camera", number>>;
 };
 
+export type RealMapPoint = {
+  id: string;
+  stationId: string;
+  name: string;
+  stationName: string;
+  risk: Station["risk"];
+  status: Station["status"];
+  lat: number;
+  lng: number;
+  locationSource: "gps" | "default" | "station";
+  lastSeenAt?: string;
+  deviceCount?: number;
+};
+
 type RealMapViewProps = {
   layer: BaseLayer;
   stations: Station[];
+  points?: RealMapPoint[];
   selectedStationIds: string[];
   onSelectStationIds: (ids: string[]) => void;
   resetKey?: number;
@@ -104,18 +123,58 @@ function ClearSelectionOnMapClick(props: { onClear: () => void }) {
 }
 
 export function RealMapView(props: RealMapViewProps) {
-  const tdtKey = (import.meta.env.VITE_TDT_KEY as string | undefined) ?? "";
-  const useTdt = Boolean(tdtKey);
-  const defaultLat = 22.6263;
-  const defaultLng = 110.1805;
+  const configuredTdtKey = (import.meta.env.VITE_TDT_KEY as string | undefined)?.trim();
+  const tdtKey = configuredTdtKey || LEGACY_PUBLIC_TDT_KEY;
+  const [tileProvider, setTileProvider] = useState<TileProvider>("tianditu");
+  const tdtTileErrorCountRef = useRef(0);
+  const useTdt = Boolean(tdtKey) && tileProvider === "tianditu";
+  const defaultLat = 24.43803;
+  const defaultLng = 118.09631;
+
+  useEffect(() => {
+    tdtTileErrorCountRef.current = 0;
+    setTileProvider("tianditu");
+  }, [props.layer, props.resetKey, tdtKey]);
+
+  const tdtEventHandlers = useMemo(
+    () => ({
+      load: () => {
+        tdtTileErrorCountRef.current = 0;
+      },
+      tileerror: () => {
+        tdtTileErrorCountRef.current += 1;
+        if (tdtTileErrorCountRef.current >= TDT_TILE_ERROR_THRESHOLD) {
+          setTileProvider("esri");
+        }
+      }
+    }),
+    []
+  );
+  const points = useMemo<RealMapPoint[]>(
+    () =>
+      props.points ??
+      props.stations.map((station) => ({
+        id: station.id,
+        stationId: station.id,
+        name: station.name,
+        stationName: station.name,
+        risk: station.risk,
+        status: station.status,
+        lat: station.lat,
+        lng: station.lng,
+        locationSource: "station",
+        deviceCount: station.deviceCount
+      })),
+    [props.points, props.stations]
+  );
 
   const icons = useMemo(() => {
     const byId = new Map<string, L.DivIcon>();
 
-    for (const s of props.stations) {
-      const isSelected = props.selectedStationIds.includes(s.id);
-      const cls = `${riskClass(s.risk)}${isSelected ? " is-selected" : ""}`;
-      const count = Math.max(0, Math.round(s.deviceCount ?? 0));
+    for (const point of points) {
+      const isSelected = props.selectedStationIds.includes(point.stationId);
+      const cls = `${riskClass(point.risk)}${isSelected ? " is-selected" : ""}`;
+      const count = Math.max(0, Math.round(point.deviceCount ?? 0));
       const badge = count > 0 ? `<span class="badge">${count}</span>` : "";
       const html =
         `<div class="desk-map-marker ${cls}">` +
@@ -126,7 +185,7 @@ export function RealMapView(props: RealMapViewProps) {
         `</div>`;
 
       byId.set(
-        s.id,
+        point.id,
         L.divIcon({
           className: "desk-map-marker-icon",
           html,
@@ -137,12 +196,12 @@ export function RealMapView(props: RealMapViewProps) {
     }
 
     return byId;
-  }, [props.selectedStationIds, props.stations]);
+  }, [points, props.selectedStationIds]);
 
   const bounds = useMemo<L.LatLngBoundsExpression>(() => {
-    const pts = props.stations
-      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
-      .map((s) => [s.lat, s.lng] as [number, number]);
+    const pts = points
+      .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng))
+      .map((point) => [point.lat, point.lng] as [number, number]);
     if (!pts.length) return [[defaultLat - 0.05, defaultLng - 0.06], [defaultLat + 0.05, defaultLng + 0.06]];
     const lats = pts.map((point) => point[0]);
     const lngs = pts.map((point) => point[1]);
@@ -158,12 +217,12 @@ export function RealMapView(props: RealMapViewProps) {
       [centerLat - latSpan / 2, centerLng - lngSpan / 2],
       [centerLat + latSpan / 2, centerLng + lngSpan / 2],
     ];
-  }, [props.stations]);
+  }, [points]);
 
-  const osmAttribution = `&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`;
-  const esriAttribution =
+  const esriImageryAttribution =
     `Tiles &copy; Esri` +
     ` &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community`;
+  const esriStreetAttribution = `Tiles &copy; Esri &mdash; Source: Esri, HERE, Garmin, USGS, NGA, EPA, USDA, NPS`;
   const tdtAttribution = `&copy; 天地图`;
 
   const tdtBaseLayer = props.layer === "卫星图" ? "img" : "vec";
@@ -174,11 +233,11 @@ export function RealMapView(props: RealMapViewProps) {
     props.layer === "卫星图"
       ? {
           url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-          attribution: esriAttribution
+          attribution: esriImageryAttribution
         }
       : {
-          url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          attribution: osmAttribution
+          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+          attribution: esriStreetAttribution
         };
 
   return (
@@ -195,8 +254,10 @@ export function RealMapView(props: RealMapViewProps) {
       {useTdt ? (
         <>
           <TileLayer
+            key={`tianditu-base-${tdtBaseLayer}`}
             url={tdtUrl(tdtBaseLayer)}
             attribution={tdtAttribution}
+            eventHandlers={tdtEventHandlers}
             subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
             maxZoom={18}
             maxNativeZoom={18}
@@ -204,8 +265,10 @@ export function RealMapView(props: RealMapViewProps) {
             updateWhenIdle
           />
           <TileLayer
+            key={`tianditu-label-${tdtLabelLayer}`}
             url={tdtUrl(tdtLabelLayer)}
             attribution={tdtAttribution}
+            eventHandlers={tdtEventHandlers}
             subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
             maxZoom={18}
             maxNativeZoom={18}
@@ -214,7 +277,15 @@ export function RealMapView(props: RealMapViewProps) {
           />
         </>
       ) : (
-        <TileLayer url={fallbackTile.url} attribution={fallbackTile.attribution} maxZoom={18} maxNativeZoom={18} detectRetina updateWhenIdle />
+        <TileLayer
+          key={`esri-${props.layer}`}
+          url={fallbackTile.url}
+          attribution={fallbackTile.attribution}
+          maxZoom={18}
+          maxNativeZoom={18}
+          detectRetina
+          updateWhenIdle
+        />
       )}
       <RemoveLeafletAttributionPrefix />
       <ResizeAndFitBounds bounds={bounds} />
@@ -225,17 +296,23 @@ export function RealMapView(props: RealMapViewProps) {
         }}
       />
 
-      {props.stations.map((s) => {
-        const icon = icons.get(s.id);
+      {points.map((point) => {
+        const icon = icons.get(point.id);
         if (!icon) return null;
-        const risk = riskText(s.risk);
-        const status = statusText(s.status);
-        const m = props.metricsByStationId?.[s.id];
+        const risk = riskText(point.risk);
+        const status = statusText(point.status);
+        const m = props.metricsByStationId?.[point.stationId];
+        const locationText =
+          point.locationSource === "gps"
+            ? "最后有效 GPS"
+            : point.locationSource === "default"
+              ? "厦门大学默认位置（等待首次有效 GPS）"
+              : "站点登记位置";
 
         return (
           <Marker
-            key={s.id}
-            position={[s.lat, s.lng]}
+            key={point.id}
+            position={[point.lat, point.lng]}
             icon={icon}
             eventHandlers={{
               click: (e) => {
@@ -246,22 +323,23 @@ export function RealMapView(props: RealMapViewProps) {
                   Boolean(e.originalEvent && ("shiftKey" in e.originalEvent ? (e.originalEvent as MouseEvent).shiftKey : false));
 
                 if (!multi) {
-                  props.onSelectStationIds([s.id]);
+                  props.onSelectStationIds([point.stationId]);
                   return;
                 }
 
                 const set = new Set(props.selectedStationIds);
-                if (set.has(s.id)) set.delete(s.id);
-                else set.add(s.id);
+                if (set.has(point.stationId)) set.delete(point.stationId);
+                else set.add(point.stationId);
                 props.onSelectStationIds(Array.from(set));
               }
             }}
           >
             <Tooltip className="desk-map-tooltip" direction="top" offset={[0, -12]} opacity={1} sticky>
-              <div style={{ fontWeight: 900 }}>{s.name}</div>
+              <div style={{ fontWeight: 900 }}>{point.name}</div>
               <div style={{ opacity: 0.9, fontSize: 12 }}>
-                {risk} · {status} · 传感器 {s.deviceCount}
+                {risk} · {status} · {locationText}
               </div>
+              <div style={{ opacity: 0.72, fontSize: 11 }}>{point.stationName}</div>
               {m ? (
                 <div style={{ opacity: 0.9, fontSize: 12 }}>
                   在线 {m.deviceOnline} 预警 {m.deviceWarn} 离线 {m.deviceOffline}

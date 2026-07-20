@@ -4,6 +4,7 @@ import type {
   AccountUser,
   AiPrediction,
   Baseline,
+  CompetitionTiltProfile,
   DashboardSummary,
   Device,
   EffectiveSuccessNotificationPolicy,
@@ -225,7 +226,10 @@ function makeMockHermesVolatilitySurface(): NonNullable<SystemStatus["hermesEdge
   };
 }
 
-function makeMockFieldAlarmStatus(action?: FieldAlarmAction): FieldAlarmStatus {
+function makeMockFieldAlarmStatus(
+  action?: FieldAlarmAction,
+  competitionProfile?: CompetitionTiltProfile | null
+): FieldAlarmStatus {
   const active = action === "alarm_on";
   const silenced = action === "silence" || action === "ack";
   const resolved = action === "alarm_off" || action === "resolve";
@@ -258,7 +262,25 @@ function makeMockFieldAlarmStatus(action?: FieldAlarmAction): FieldAlarmStatus {
       lastAction: action ?? null,
       lastActionAt: action ? nowIso() : null,
       detail: "Mock 模式：模拟 RK3568 /dev/ttyS7 声光报警执行器。",
+      tongxiao: {
+        deviceId: "mock-tongxiao-rk2206",
+        mqttConnected: true,
+        boardOnline: true,
+        inSync: true,
+        reported: {
+          state: active ? "active" : silenced ? "silenced" : "idle",
+          firmware_version: "mock",
+        },
+        presence: {
+          status: "online",
+          meta: { fw: "mock", role: "tongxiao_alarm_terminal" },
+        },
+        presenceAgeSeconds: 1,
+        presenceStaleSeconds: 90,
+        voiceEnabled: false,
+      },
     },
+    competitionProfile: competitionProfile ?? null,
   };
 }
 
@@ -1354,6 +1376,51 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     ["u_operator", "123456"],
   ]);
   let fieldAlarmAction: FieldAlarmAction | undefined;
+  const mockTiltCapturedAt = nowIso();
+  const mockTiltDevices = devices.filter((device) => device.identityClass === "formal" && device.type === "tilt").slice(0, 3);
+  let competitionTiltProfile: CompetitionTiltProfile | null = {
+    schemaVersion: 1,
+    mode: "competition_relative_tilt",
+    enabled: true,
+    ruleId: "10000000-0000-4000-8000-000000000001",
+    ruleVersion: 1,
+    capturedAt: mockTiltCapturedAt,
+    updatedAt: mockTiltCapturedAt,
+    thresholds: {
+      highDeg: 3,
+      criticalDeg: 7,
+      recoveryDeg: 1.5,
+      triggerPoints: 2,
+      recoveryPoints: 2,
+      updateStepDeg: 0.25,
+    },
+    devices: mockTiltDevices.map((device) => ({
+      deviceId: device.id,
+      deviceName: device.name,
+      stationId: device.stationId,
+      baseline: { x: 0, y: 0, z: 0 },
+      capturedAt: mockTiltCapturedAt,
+    })),
+    live: mockTiltDevices.map((device, index) => {
+      const x = Number((stablePercent(`${device.id}-tilt-x`, 18, 96) / 100).toFixed(3));
+      const y = Number((stablePercent(`${device.id}-tilt-y`, 12, 84) / 100).toFixed(3));
+      const z = Number((stablePercent(`${device.id}-tilt-z`, 8, 62) / 100).toFixed(3));
+      const delta = index === 1 ? { x: x + 3.2, y, z } : { x, y, z };
+      const axes = (["x", "y", "z"] as const).map((axis) => ({ axis, value: Math.abs(delta[axis]) }));
+      const peak = axes.sort((a, b) => b.value - a.value)[0]!;
+      return {
+        deviceId: device.id,
+        updatedAt: mockTiltCapturedAt,
+        deviation: {
+          current: delta,
+          baseline: { x: 0, y: 0, z: 0 },
+          delta,
+          maxAxis: peak.axis,
+          maxDeviationDeg: peak.value,
+        },
+      };
+    }),
+  };
   let systemConfigs = [
     {
       key: "gps.displacement_threshold_blue_mm",
@@ -1512,6 +1579,63 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
       description: input.description,
       requestData: input.requestData,
       responseData: input.responseData,
+    });
+  };
+
+  const buildMockTelemetrySeries = (
+    input: Parameters<ApiClient["telemetry"]["getSeries"]>[0]
+  ) => {
+    const device = devices.find((item) => item.id === input.deviceId);
+    const station = stations.find((item) => item.id === device?.stationId);
+    const startMs = Number.isFinite(Date.parse(input.startTime))
+      ? Date.parse(input.startTime)
+      : Date.now() - 11 * 60 * 60 * 1000;
+    const endMs = Number.isFinite(Date.parse(input.endTime)) ? Date.parse(input.endTime) : Date.now();
+    const count = input.interval === "1d" ? 7 : input.interval === "1h" ? 24 : input.interval === "raw" ? 20 : 12;
+    const stepMs =
+      input.interval === "1d"
+        ? 24 * 60 * 60 * 1000
+        : input.interval === "1h"
+          ? 60 * 60 * 1000
+          : Math.max(1, Math.floor((endMs - startMs) / Math.max(1, count - 1)));
+
+    return Array.from({ length: count }, (_, idx) => {
+      const ts = new Date(Math.min(endMs, startMs + idx * stepMs)).toISOString();
+      const wave = Math.sin(idx / 2.5);
+      const seed = stablePercent(`${input.deviceId}-${input.sensorKey}-${idx}`, 0, 100) / 100;
+      let value: number;
+
+      if (input.sensorKey === "rainfall_mm") {
+        value = Math.max(0, 0.4 + wave * 0.35 + seed * 1.6);
+      } else if (input.sensorKey === "temperature_c") {
+        value = 21.2 + wave * 1.1 + seed * 1.4;
+      } else if (input.sensorKey === "humidity_pct") {
+        value = 62 + wave * 4.2 + seed * 6.5;
+      } else if (input.sensorKey === "soil_temperature_c") {
+        value = 22.4 + wave * 0.9 + seed * 1.2;
+      } else if (input.sensorKey === "soil_moisture_pct") {
+        value = 29 + wave * 2.6 + seed * 4.2;
+      } else if (input.sensorKey === "electrical_conductivity_us_cm") {
+        value = 520 + wave * 38 + seed * 110;
+      } else if (input.sensorKey.startsWith("tilt_")) {
+        const axisBaseline = input.sensorKey === "tilt_x_deg" ? 0.42 : input.sensorKey === "tilt_y_deg" ? 0.18 : 0;
+        const baseline = axisBaseline + stablePercent(`${input.deviceId}-${input.sensorKey}-base`, 0, 42) / 100;
+        const stationBias = stablePercent(`${station?.id ?? input.deviceId}-${input.sensorKey}-bias`, 0, 18) / 100;
+        const warningBoost = device?.status === "warning" ? (input.sensorKey === "tilt_x_deg" ? 0.42 : 0.28) : 0;
+        const drift = idx * (input.sensorKey === "tilt_x_deg" ? 0.006 : 0.004);
+        value = baseline + stationBias + warningBoost + drift + wave * 0.055 + (seed - 0.5) * 0.045;
+      } else if (input.sensorKey === "gps_latitude") {
+        value = (station?.lat ?? DEMO_SITE_LAT) + idx * 0.000002;
+      } else if (input.sensorKey === "gps_longitude") {
+        value = (station?.lng ?? DEMO_SITE_LNG) + idx * 0.000002;
+      } else {
+        value = 1 + seed * 9;
+      }
+
+      return {
+        ts,
+        value: Number(value.toFixed(input.sensorKey.startsWith("gps_") ? 6 : input.sensorKey.startsWith("tilt_") ? 3 : 2)),
+      };
     });
   };
 
@@ -1912,58 +2036,13 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     telemetry: {
       async getSeries(input) {
         await afterDelay("telemetry.getSeries");
-        const device = devices.find((item) => item.id === input.deviceId);
-        const station = stations.find((item) => item.id === device?.stationId);
-        const startMs = Number.isFinite(Date.parse(input.startTime))
-          ? Date.parse(input.startTime)
-          : Date.now() - 11 * 60 * 60 * 1000;
-        const endMs = Number.isFinite(Date.parse(input.endTime)) ? Date.parse(input.endTime) : Date.now();
-        const count = input.interval === "1d" ? 7 : input.interval === "1h" ? 24 : 12;
-        const stepMs =
-          input.interval === "1d"
-            ? 24 * 60 * 60 * 1000
-            : input.interval === "1h"
-              ? 60 * 60 * 1000
-              : Math.max(1, Math.floor((endMs - startMs) / Math.max(1, count - 1)));
-
-        return Array.from({ length: count }, (_, idx) => {
-          const ts = new Date(Math.min(endMs, startMs + idx * stepMs)).toISOString();
-          const wave = Math.sin(idx / 2.5);
-          const seed = stablePercent(`${input.deviceId}-${input.sensorKey}-${idx}`, 0, 100) / 100;
-          let value: number;
-
-          if (input.sensorKey === "rainfall_mm") {
-            value = Math.max(0, 0.4 + wave * 0.35 + seed * 1.6);
-          } else if (input.sensorKey === "temperature_c") {
-            value = 21.2 + wave * 1.1 + seed * 1.4;
-          } else if (input.sensorKey === "humidity_pct") {
-            value = 62 + wave * 4.2 + seed * 6.5;
-          } else if (input.sensorKey === "soil_temperature_c") {
-            value = 22.4 + wave * 0.9 + seed * 1.2;
-          } else if (input.sensorKey === "soil_moisture_pct") {
-            value = 29 + wave * 2.6 + seed * 4.2;
-          } else if (input.sensorKey === "electrical_conductivity_us_cm") {
-            value = 520 + wave * 38 + seed * 110;
-          } else if (input.sensorKey === "tilt_x_deg" || input.sensorKey === "tilt_y_deg") {
-            const isTiltX = input.sensorKey === "tilt_x_deg";
-            const baseline = (isTiltX ? 0.42 : 0.18) + stablePercent(`${input.deviceId}-${input.sensorKey}-base`, 0, 42) / 100;
-            const stationBias = stablePercent(`${station?.id ?? input.deviceId}-${input.sensorKey}-bias`, 0, 18) / 100;
-            const warningBoost = device?.status === "warning" ? (isTiltX ? 0.42 : 0.28) : 0;
-            const drift = idx * (isTiltX ? 0.006 : 0.004);
-            value = Math.max(0, baseline + stationBias + warningBoost + drift + wave * (isTiltX ? 0.055 : 0.04) + (seed - 0.5) * 0.045);
-          } else if (input.sensorKey === "gps_latitude") {
-            value = (station?.lat ?? DEMO_SITE_LAT) + idx * 0.000002;
-          } else if (input.sensorKey === "gps_longitude") {
-            value = (station?.lng ?? DEMO_SITE_LNG) + idx * 0.000002;
-          } else {
-            value = 1 + seed * 9;
-          }
-
-          return {
-            ts,
-            value: Number(value.toFixed(input.sensorKey.startsWith("gps_") ? 6 : input.sensorKey.startsWith("tilt_") ? 3 : 2)),
-          };
-        });
+        return buildMockTelemetrySeries(input);
+      },
+      async getSeriesBatch(input) {
+        await afterDelay("telemetry.getSeriesBatch");
+        return Object.fromEntries(
+          input.sensorKeys.map((sensorKey) => [sensorKey, buildMockTelemetrySeries({ ...input, sensorKey })])
+        );
       },
     },
     aiPredictions: {
@@ -1989,7 +2068,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     alerts: {
       async list(input) {
         await afterDelay("alerts.list");
-        const status = makeMockFieldAlarmStatus(fieldAlarmAction);
+        const status = makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile);
         const all = status.latestAlert ? [status.latestAlert] : [];
         const filtered = all.filter((item) => {
           if (input?.deviceId && item.deviceId !== input.deviceId) return false;
@@ -2017,11 +2096,35 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
           },
         };
       },
+      async getEvents(alertId) {
+        await afterDelay("alerts.getEvents");
+        const alert = makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile).latestAlert;
+        if (!alert || alert.alertId !== alertId) return { alertId, events: [] };
+        return {
+          alertId,
+          events: [
+            {
+              eventId: `mock-event-${alertId}`,
+              eventType: alert.status === "acked" ? "ALERT_ACK" as const : "ALERT_TRIGGER" as const,
+              severity: alert.severity,
+              createdAt: alert.lastEventAt,
+              ruleId: alert.ruleId,
+              ruleVersion: alert.ruleVersion,
+              deviceId: alert.deviceId,
+              stationId: alert.stationId,
+              evidence: alert.evidence ?? {},
+            },
+          ],
+        };
+      },
+      subscribe() {
+        return () => undefined;
+      },
     },
     fieldAlarm: {
       async getStatus() {
         await afterDelay("fieldAlarm.getStatus");
-        return makeMockFieldAlarmStatus(fieldAlarmAction);
+        return makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile);
       },
       async sendAction(input) {
         await afterDelay("fieldAlarm.sendAction");
@@ -2029,8 +2132,57 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
         return {
           action: input.action,
           accepted: true,
-          actuator: makeMockFieldAlarmStatus(fieldAlarmAction).actuator,
+          actuator: makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile).actuator,
         };
+      },
+      async getCompetitionProfile() {
+        await afterDelay("fieldAlarm.getCompetitionProfile");
+        return competitionTiltProfile;
+      },
+      async captureCompetitionBaseline(input) {
+        await afterDelay("fieldAlarm.captureCompetitionBaseline");
+        const capturedAt = nowIso();
+        const selectedIds = input?.deviceIds ? new Set(input.deviceIds) : null;
+        const profileDevices = devices
+          .filter((device) => !selectedIds || selectedIds.has(device.id))
+          .slice(0, 3)
+          .map((device) => ({
+            deviceId: device.id,
+            deviceName: device.name,
+            stationId: device.stationId,
+            baseline: { x: 0, y: 0, z: 0 },
+            capturedAt,
+          }));
+        competitionTiltProfile = {
+          schemaVersion: 1,
+          mode: "competition_relative_tilt",
+          enabled: true,
+          ruleId: "10000000-0000-4000-8000-000000000001",
+          ruleVersion: 1,
+          capturedAt,
+          updatedAt: capturedAt,
+          thresholds: {
+            highDeg: input?.thresholds?.highDeg ?? 3,
+            criticalDeg: input?.thresholds?.criticalDeg ?? 7,
+            recoveryDeg: input?.thresholds?.recoveryDeg ?? 1.5,
+            triggerPoints: input?.thresholds?.triggerPoints ?? 2,
+            recoveryPoints: input?.thresholds?.recoveryPoints ?? 2,
+            updateStepDeg: input?.thresholds?.updateStepDeg ?? 0.25,
+          },
+          devices: profileDevices,
+        };
+        return { profile: competitionTiltProfile, skipped: [] };
+      },
+      async updateCompetitionProfile(input) {
+        await afterDelay("fieldAlarm.updateCompetitionProfile");
+        if (!competitionTiltProfile) throw new Error("请先采集当前倾角基线");
+        competitionTiltProfile = {
+          ...competitionTiltProfile,
+          enabled: input.enabled ?? competitionTiltProfile.enabled,
+          thresholds: { ...competitionTiltProfile.thresholds, ...(input.thresholds ?? {}) },
+          updatedAt: nowIso(),
+        };
+        return competitionTiltProfile;
       },
     },
     gps: {

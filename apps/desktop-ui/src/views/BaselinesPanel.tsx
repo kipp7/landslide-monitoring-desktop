@@ -5,18 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { Baseline, BaselineStatus, Device } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
+import { isFormalGnssDevice } from "../utils/deviceCapabilities";
 
 type EditState =
   | { open: false }
   | { open: true; mode: "create" | "edit"; deviceId?: string; baseline?: Baseline };
-
-function normalizeIdentityClass(value?: string | null): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function isFormalIdentityClass(value?: string | null): boolean {
-  return normalizeIdentityClass(value) === "formal";
-}
 
 function baselineStatusTag(status: BaselineStatus) {
   if (status === "active") return <Tag color="green">已建立</Tag>;
@@ -44,7 +37,7 @@ export function BaselinesPanel(props: { className?: string; style?: React.CSSPro
     setLoading(true);
     try {
       const [devicesList, baselineList] = await Promise.all([api.devices.list(), api.baselines.list()]);
-      setDevices(devicesList.filter((x) => x.type === "gnss" && isFormalIdentityClass(x.identityClass)));
+      setDevices(devicesList.filter(isFormalGnssDevice));
       setBaselines(baselineList);
     } finally {
       setLoading(false);

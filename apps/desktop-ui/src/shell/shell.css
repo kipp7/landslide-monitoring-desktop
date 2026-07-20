@@ -6,3 +6,220 @@
     radial-gradient(circle at 85% 80%, rgba(96, 165, 250, 0.14), transparent 45%),
     linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #0f172a 100%);
 }
+
+.desk-app.is-field-alarming::after {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  pointer-events: none;
+  content: "";
+  border: 5px solid rgba(220, 38, 38, 0.9);
+  box-shadow: inset 0 0 42px rgba(220, 38, 38, 0.42);
+  animation: desk-field-alarm-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes desk-field-alarm-pulse {
+  0%, 100% { opacity: 0.62; }
+  50% { opacity: 1; }
+}
+
+.desk-global-alarm-modal .ant-modal-content {
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgba(220, 38, 38, 0.58);
+  background: #fff;
+  box-shadow: 0 26px 72px rgba(59, 12, 12, 0.34);
+}
+
+.desk-global-alarm-modal .ant-modal-header {
+  margin: 0;
+  padding: 18px 22px;
+  border-bottom: 1px solid #f0c8c2;
+  background: #fff6f4;
+}
+
+.desk-global-alarm-modal .ant-modal-close {
+  top: 17px;
+  color: #7f1d1d;
+}
+
+.desk-global-alarm-modal .ant-modal-body {
+  padding: 0;
+}
+
+.desk-global-alarm-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.desk-global-alarm-title-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 6px;
+  color: #fff;
+  background: #c62828;
+  font-size: 20px;
+}
+
+.desk-global-alarm-title div {
+  display: grid;
+  gap: 2px;
+}
+
+.desk-global-alarm-title strong {
+  color: #541b16;
+  font-size: 17px;
+}
+
+.desk-global-alarm-title span:last-child {
+  color: #8b5a53;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.desk-global-alarm-layout {
+  display: grid;
+  min-height: 390px;
+  grid-template-columns: 230px minmax(0, 1fr);
+}
+
+.desk-global-alarm-list {
+  overflow-y: auto;
+  max-height: 520px;
+  padding: 12px 0;
+  border-right: 1px solid #ead9d6;
+  background: #faf7f6;
+}
+
+.desk-global-alarm-item {
+  display: grid;
+  width: 100%;
+  min-height: 66px;
+  padding: 10px 14px;
+  border: 0;
+  border-left: 3px solid transparent;
+  color: #3f2723;
+  background: transparent;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.desk-global-alarm-item:hover,
+.desk-global-alarm-item.is-selected {
+  border-left-color: #c62828;
+  background: #fff;
+}
+
+.desk-global-alarm-item > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.desk-global-alarm-item strong,
+.desk-global-alarm-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desk-global-alarm-item strong { font-size: 13px; }
+.desk-global-alarm-item small { color: #8a6964; font-size: 11px; }
+
+.desk-global-alarm-severity {
+  width: 8px;
+  height: 28px;
+  border-radius: 2px;
+  background: #d97706;
+}
+
+.desk-global-alarm-severity.is-critical { background: #b91c1c; }
+.desk-global-alarm-severity.is-high { background: #dc4a2d; }
+.desk-global-alarm-severity.is-medium { background: #d97706; }
+.desk-global-alarm-severity.is-low { background: #46758f; }
+
+.desk-global-alarm-detail {
+  display: flex;
+  min-width: 0;
+  padding: 24px;
+  flex-direction: column;
+}
+
+.desk-global-alarm-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.desk-global-alarm-heading > span {
+  color: #80635f;
+  font-size: 12px;
+}
+
+.desk-global-alarm-detail h2 {
+  margin: 20px 0 10px;
+  color: #391a16;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.desk-global-alarm-reason {
+  min-height: 64px;
+  margin: 0;
+  padding: 13px 15px;
+  border-left: 3px solid #c62828;
+  color: #6b2820;
+  background: #fff4f1;
+  line-height: 1.65;
+}
+
+.desk-global-alarm-evidence {
+  display: grid;
+  margin-top: 20px;
+  border-top: 1px solid #ead9d6;
+  border-left: 1px solid #ead9d6;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.desk-global-alarm-evidence > div {
+  display: grid;
+  min-height: 62px;
+  padding: 10px 12px;
+  border-right: 1px solid #ead9d6;
+  border-bottom: 1px solid #ead9d6;
+  gap: 3px;
+}
+
+.desk-global-alarm-evidence span { color: #876965; font-size: 11px; }
+.desk-global-alarm-evidence strong { color: #3e2723; font-size: 14px; }
+
+.desk-global-alarm-actions {
+  display: flex;
+  margin-top: auto;
+  padding-top: 24px;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .desk-global-alarm-layout { grid-template-columns: 1fr; }
+  .desk-global-alarm-list {
+    display: flex;
+    max-height: 150px;
+    border-right: 0;
+    border-bottom: 1px solid #ead9d6;
+  }
+  .desk-global-alarm-item { min-width: 190px; }
+  .desk-global-alarm-actions { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-app.is-field-alarming::after { animation: none; }
+}

@@ -23,7 +23,8 @@ import {
   SettingOutlined
 } from "@ant-design/icons";
 import dayjs from "dayjs";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type { Device, DeviceType, OnlineStatus, RiskLevel, StationManagementStation } from "../api/client";
 import { useApi } from "../api/ApiProvider";
@@ -31,7 +32,7 @@ import { BaseCard } from "../components/BaseCard";
 import { RiskTag } from "../components/RiskTag";
 import { StatusTag } from "../components/StatusTag";
 import { formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
-import { formatLifecycleStatusDisplay, lifecycleStatusTagColor } from "../utils/fieldIdentityDisplay";
+import { formatInstallLabelDisplay, formatLifecycleStatusDisplay, lifecycleStatusTagColor } from "../utils/fieldIdentityDisplay";
 import "./stationManagement.css";
 
 type ViewMode = "list" | "hierarchy";
@@ -66,6 +67,7 @@ type HierarchyRegion = {
 
 function deviceTypeLabel(type: DeviceType) {
   if (type === "gnss") return "GNSS";
+  if (type === "multi_sensor") return "土壤/倾角多传感";
   if (type === "rain") return "雨量";
   if (type === "tilt") return "倾角";
   if (type === "temp_hum") return "温湿度";
@@ -74,6 +76,18 @@ function deviceTypeLabel(type: DeviceType) {
 
 function canonicalText(value?: string | null): string {
   return value?.trim() ? value.trim() : "—";
+}
+
+function formatCoordinate(lat: number, lng: number, digits = 5): string {
+  if (lat === 0 && lng === 0) return "未配置";
+  return `${lat.toFixed(digits)}, ${lng.toFixed(digits)}`;
+}
+
+function formatDeviceLastSeen(value?: string | null): string {
+  if (!value) return "未上报";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1970) return "未上报";
+  return formatBeijingDateTime(date, { includeSeconds: false });
 }
 
 function normalizeIdentityClass(value?: string | null): string {
@@ -174,6 +188,7 @@ function buildHierarchyData(stations: StationManagementStation[]): HierarchyRegi
 
 export function StationManagementPanel(props: { className?: string; style?: React.CSSProperties; initialStationId?: string | null }) {
   const api = useApi();
+  const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -186,6 +201,8 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
   const [edit, setEdit] = useState<EditState>({ open: false });
   const [legend, setLegend] = useState<LegendState>({ open: false });
   const [detailStationId, setDetailStationId] = useState<string | null>(null);
+  const [expandedStationIds, setExpandedStationIds] = useState<string[]>([]);
+  const stationExpansionInitialized = useRef(false);
 
   useEffect(() => {
     if (!props.initialStationId) return;
@@ -253,13 +270,49 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
     [formalStationIds, stations]
   );
 
+  const visibleStationIds = useMemo(
+    () => new Set(visibleStations.map((station) => station.stationId)),
+    [visibleStations]
+  );
+
+  const visibleNodes = useMemo(
+    () =>
+      devices
+        .filter((device) => isFormalIdentityClass(device.identityClass) && visibleStationIds.has(device.stationId))
+        .sort((a, b) => (a.nodeCode ?? a.name).localeCompare(b.nodeCode ?? b.name)),
+    [devices, visibleStationIds]
+  );
+
+  const nodesByStation = useMemo(() => {
+    const grouped = new Map<string, Device[]>();
+    for (const device of visibleNodes) {
+      const stationNodes = grouped.get(device.stationId) ?? [];
+      stationNodes.push(device);
+      grouped.set(device.stationId, stationNodes);
+    }
+    return grouped;
+  }, [visibleNodes]);
+
+  useEffect(() => {
+    const stationIds = visibleStations.map((station) => station.stationId);
+    setExpandedStationIds((current) => {
+      const valid = current.filter((stationId) => stationIds.includes(stationId));
+      if (!stationExpansionInitialized.current && stationIds.length) {
+        stationExpansionInitialized.current = true;
+        return stationIds;
+      }
+      return valid;
+    });
+  }, [visibleStations]);
+
   const counts = useMemo(() => {
     const total = visibleStations.length;
-    const online = visibleStations.filter((s) => s.status === "online").length;
-    const offline = visibleStations.filter((s) => s.status === "offline").length;
-    const highRisk = visibleStations.filter((s) => s.riskLevel === "high").length;
-    return { total, online, offline, highRisk };
-  }, [visibleStations]);
+    const nodes = visibleNodes.length;
+    const onlineNodes = visibleNodes.filter((device) => device.status === "online").length;
+    const offlineNodes = visibleNodes.filter((device) => device.status === "offline").length;
+    const highRisk = visibleStations.filter((s) => s.riskConfigured && s.riskLevel === "high").length;
+    return { total, nodes, onlineNodes, offlineNodes, highRisk };
+  }, [visibleNodes, visibleStations]);
 
   const regions = useMemo(() => buildHierarchyData(visibleStations), [visibleStations]);
   const [expandedRegions, setExpandedRegions] = useState<Set<string>>(new Set());
@@ -324,7 +377,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       lifecycleStatus: st.lifecycleStatus ?? "",
       locationName: st.locationName,
       description: st.description,
-      riskLevel: st.riskLevel,
+      ...(st.riskConfigured ? { riskLevel: st.riskLevel } : {}),
       status: st.status,
       sensorTypes: st.sensorTypes
     });
@@ -376,6 +429,77 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
     [detailStationId, visibleStations]
   );
 
+  const toggleStationExpanded = (stationId: string) => {
+    setExpandedStationIds((current) =>
+      current.includes(stationId)
+        ? current.filter((item) => item !== stationId)
+        : [...current, stationId]
+    );
+  };
+
+  const renderStationNodes = (station: StationManagementStation) => {
+    const stationNodes = nodesByStation.get(station.stationId) ?? [];
+    const onlineCount = stationNodes.filter((device) => device.status === "online").length;
+
+    return (
+      <div className="desk-sm-node-panel">
+        <div className="desk-sm-node-panel-head">
+          <div>
+            <div className="desk-sm-node-panel-title">分节点</div>
+            <div className="desk-sm-node-panel-sub">
+              {station.displayName ?? station.stationName} · {stationNodes.length} 个节点 · {onlineCount} 个在线
+            </div>
+          </div>
+          <Tag color={onlineCount === stationNodes.length && stationNodes.length ? "success" : "warning"}>
+            {onlineCount}/{stationNodes.length} 在线
+          </Tag>
+        </div>
+
+        {stationNodes.length ? (
+          <div className="desk-sm-node-table-wrap">
+            <table className="desk-sm-node-table">
+              <thead>
+                <tr>
+                  <th>节点</th>
+                  <th>传感器</th>
+                  <th>状态</th>
+                  <th>安装位置</th>
+                  <th>最后上报</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stationNodes.map((device) => (
+                  <tr key={device.id}>
+                    <td>
+                      <div className="desk-sm-node-name">{device.name}</div>
+                      <div className="desk-sm-node-code">{device.nodeCode ?? device.id}</div>
+                    </td>
+                    <td><Tag className="desk-pill-tag">{deviceTypeLabel(device.type)}</Tag></td>
+                    <td><StatusTag value={device.status} /></td>
+                    <td>{formatInstallLabelDisplay(device.installLabel, "未配置")}</td>
+                    <td>{formatDeviceLastSeen(device.lastSeenAt)}</td>
+                    <td>
+                      <Button
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => navigate(`/app/device-management?tab=status&deviceId=${encodeURIComponent(device.id)}`)}
+                      >
+                        实时状态
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="desk-sm-node-empty">该监测站暂未绑定正式分节点</div>
+        )}
+      </div>
+    );
+  };
+
   const columns: Parameters<typeof Table<StationManagementStation>>[0]["columns"] = [
     {
       title: "监测站",
@@ -387,7 +511,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
           <div className="desk-sm-station-cell-head">
             <div className="desk-sm-station-cell-title">{row.displayName ?? row.stationName}</div>
             <StatusTag value={row.status} />
-            <RiskTag value={row.riskLevel} />
+            {row.riskConfigured ? <RiskTag value={row.riskLevel} /> : <Tag>未研判</Tag>}
           </div>
           <div className="desk-sm-station-cell-sub">{row.stationName}</div>
           <div className="desk-sm-station-cell-sub">
@@ -467,7 +591,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       render: (_: unknown, row) => (
         centeredCell(
           <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-            {row.lat.toFixed(5)}, {row.lng.toFixed(5)}
+            {formatCoordinate(row.lat, row.lng)}
           </span>,
           "desk-sm-coord-cell"
         )
@@ -479,7 +603,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       key: "lastDataTime",
       width: 188,
       align: "center",
-      render: (v: string) => centeredCell(formatBeijingDateTime(v, { includeSeconds: false }), "desk-sm-last-data-cell")
+      render: (v: string | null) => centeredCell(v ? formatBeijingDateTime(v, { includeSeconds: false }) : "未上报", "desk-sm-last-data-cell")
     },
     {
       title: "图例名称",
@@ -523,7 +647,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
       title={
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <RadarChartOutlined style={{ color: "rgba(34,211,238,0.95)" }} />
-          <span>挂傍山监测站管理</span>
+          <span>监测站管理</span>
         </span>
       }
       extra={
@@ -571,30 +695,35 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
             </div>
           </div>
           <div className="desk-sm-stat">
+            <div className="desk-sm-dot blue" />
+            <div>
+              <div className="desk-sm-stat-label">分节点</div>
+              <div className="desk-sm-stat-value">{counts.nodes}</div>
+            </div>
+          </div>
+          <div className="desk-sm-stat">
             <div className="desk-sm-dot green" />
             <div>
-              <div className="desk-sm-stat-label">在线</div>
+              <div className="desk-sm-stat-label">在线节点</div>
               <div className="desk-sm-stat-value" style={{ color: "#22c55e" }}>
-                {counts.online}
+                {counts.onlineNodes}
               </div>
             </div>
           </div>
           <div className="desk-sm-stat">
             <div className="desk-sm-dot red" />
             <div>
-              <div className="desk-sm-stat-label">离线</div>
+              <div className="desk-sm-stat-label">离线节点</div>
               <div className="desk-sm-stat-value" style={{ color: "#ef4444" }}>
-                {counts.offline}
+                {counts.offlineNodes}
               </div>
             </div>
           </div>
           <div className="desk-sm-stat">
             <div className="desk-sm-dot yellow" />
             <div>
-              <div className="desk-sm-stat-label">高风险</div>
-              <div className="desk-sm-stat-value" style={{ color: "#f59e0b" }}>
-                {counts.highRisk}
-              </div>
+              <div className="desk-sm-stat-label">已配置高风险</div>
+              <div className="desk-sm-stat-value" style={{ color: "#f59e0b" }}>{counts.highRisk}</div>
             </div>
           </div>
           <div className="desk-sm-stat-meta">
@@ -625,6 +754,14 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
               pagination={false}
               scroll={{ x: 1620, y: 420 }}
               columns={columns}
+              expandable={{
+                expandedRowKeys: expandedStationIds,
+                onExpandedRowsChange: (keys) => setExpandedStationIds(keys.map(String)),
+                expandedRowRender: renderStationNodes,
+                rowExpandable: (station) => (nodesByStation.get(station.stationId)?.length ?? 0) > 0,
+                expandRowByClick: true,
+                columnTitle: "节点"
+              }}
             />
           </div>
         ) : (
@@ -692,12 +829,15 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                         {expandedNetworks.has(network.network_code) ? (
                           <div className="desk-sm-station-grid">
                             {network.stations.map((st) => (
-                              <div key={st.stationId} className="desk-sm-station-card">
+                              <div
+                                key={st.stationId}
+                                className={`desk-sm-station-card ${expandedStationIds.includes(st.stationId) ? "is-expanded" : ""}`}
+                              >
                                 <div className="desk-sm-station-top">
                                   <div className="desk-sm-station-name">{st.displayName ?? st.stationName}</div>
                                   <div className="desk-sm-station-tags">
                                     <StatusTag value={st.status} />
-                                    <RiskTag value={st.riskLevel} />
+                                    {st.riskConfigured ? <RiskTag value={st.riskLevel} /> : <Tag>未研判</Tag>}
                                   </div>
                                 </div>
                                 <div className="desk-sm-station-sub">{st.displayName ?? st.stationName}</div>
@@ -709,6 +849,13 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                                 </div>
                                 <div className="desk-sm-station-sub">{st.locationName}</div>
                                 <div className="desk-sm-station-actions">
+                                  <Button
+                                    size="small"
+                                    icon={expandedStationIds.includes(st.stationId) ? <CaretDownOutlined /> : <CaretRightOutlined />}
+                                    onClick={() => toggleStationExpanded(st.stationId)}
+                                  >
+                                    分节点 {nodesByStation.get(st.stationId)?.length ?? 0}
+                                  </Button>
                                   <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(st.stationId)}>
                                     编辑
                                   </Button>
@@ -722,6 +869,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                                     详情
                                   </Button>
                                 </div>
+                                {expandedStationIds.includes(st.stationId) ? renderStationNodes(st) : null}
                               </div>
                             ))}
                           </div>
@@ -850,7 +998,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
               placeholder="选择传感器类型"
               options={[
                 { label: "GNSS", value: "gnss" },
-                { label: "雨量", value: "rain" },
+                { label: "土壤/倾角多传感", value: "multi_sensor" },
                 { label: "倾角", value: "tilt" },
                 { label: "温湿度", value: "temp_hum" },
                 { label: "摄像头", value: "camera" }
@@ -952,7 +1100,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                 <div className="desk-sm-detail-item">
                   <span className="k">风险</span>
                   <span className="v">
-                    <RiskTag value={detailStation.riskLevel} />
+                    {detailStation.riskConfigured ? <RiskTag value={detailStation.riskLevel} /> : <Tag>未研判</Tag>}
                   </span>
                 </div>
                 <div className="desk-sm-detail-item">
@@ -973,7 +1121,7 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
                 </div>
                 <div className="desk-sm-detail-item">
                   <span className="k">最后数据</span>
-                  <span className="v">{formatBeijingDateTime(detailStation.lastDataTime)}</span>
+                  <span className="v">{detailStation.lastDataTime ? formatBeijingDateTime(detailStation.lastDataTime) : "未上报"}</span>
                 </div>
               </div>
             </div>
@@ -1003,10 +1151,11 @@ export function StationManagementPanel(props: { className?: string; style?: Reac
               <div className="desk-sm-detail-item">
                 <span className="k">坐标</span>
                 <span className="v" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                  {detailStation.lat.toFixed(6)}, {detailStation.lng.toFixed(6)}
+                  {formatCoordinate(detailStation.lat, detailStation.lng, 6)}
                 </span>
               </div>
             </div>
+            <div style={{ marginTop: 12 }}>{renderStationNodes(detailStation)}</div>
           </div>
         ) : (
           <div style={{ color: "rgba(148,163,184,0.9)" }}>-</div>

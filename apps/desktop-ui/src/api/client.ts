@@ -66,7 +66,11 @@ export type ResetAccountPasswordResult = {
 export type DashboardSummary = {
   stationCount: number;
   deviceOnlineCount: number;
+  totalDeviceCount?: number;
+  offlineDeviceCount?: number;
+  freshDeviceCount?: number;
   alertCountToday: number;
+  pendingAlertCount?: number;
   systemHealthPercent: number;
 };
 
@@ -108,17 +112,18 @@ export type StationManagementStation = {
   description: string;
   chartLegendName: string;
   riskLevel: RiskLevel;
+  riskConfigured?: boolean;
   status: OnlineStatus;
   lat: number;
   lng: number;
   altitude?: number;
   deviceCount: number;
   sensorTypes: DeviceType[];
-  lastDataTime: string;
+  lastDataTime: string | null;
   updatedAt?: string;
 };
 
-export type DeviceType = "gnss" | "rain" | "tilt" | "temp_hum" | "camera" | "field_gateway";
+export type DeviceType = "gnss" | "multi_sensor" | "rain" | "tilt" | "temp_hum" | "camera" | "field_gateway";
 
 export type Device = {
   id: string;
@@ -190,6 +195,72 @@ export type AlertSummaryItem = {
   lastEventAt: string;
 };
 
+export type AlertStreamEvent = {
+  type: "alert";
+  eventId: string;
+  alertId: string;
+  eventType: "ALERT_TRIGGER" | "ALERT_UPDATE" | "ALERT_ACK" | "ALERT_RESOLVE";
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  deviceId: string | null;
+  stationId: string | null;
+  evidence: Record<string, unknown>;
+  latitude?: number;
+  longitude?: number;
+  createdAt: string;
+};
+
+export type AlertLifecycleEvent = {
+  eventId: string;
+  eventType: "ALERT_TRIGGER" | "ALERT_UPDATE" | "ALERT_ACK" | "ALERT_RESOLVE";
+  severity: AlertSeverity;
+  createdAt: string;
+  ruleId: string;
+  ruleVersion: number;
+  deviceId: string | null;
+  stationId: string | null;
+  evidence: Record<string, unknown>;
+};
+
+export type CompetitionTiltVector = { x: number; y: number; z: number };
+
+export type CompetitionTiltProfile = {
+  schemaVersion: 1;
+  mode: "competition_relative_tilt";
+  enabled: boolean;
+  ruleId: string;
+  ruleVersion: number;
+  capturedAt: string;
+  updatedAt: string;
+  thresholds: {
+    highDeg: number;
+    criticalDeg: number;
+    recoveryDeg: number;
+    triggerPoints: number;
+    recoveryPoints: number;
+    updateStepDeg: number;
+  };
+  devices: Array<{
+    deviceId: string;
+    deviceName: string;
+    stationId: string | null;
+    baseline: CompetitionTiltVector;
+    capturedAt: string;
+  }>;
+  live?: Array<{
+    deviceId: string;
+    updatedAt: string | null;
+    deviation: {
+      current: CompetitionTiltVector;
+      baseline: CompetitionTiltVector;
+      delta: CompetitionTiltVector;
+      maxAxis: "x" | "y" | "z";
+      maxDeviationDeg: number;
+    } | null;
+  }>;
+};
+
 export type FieldAlarmActuatorStatus = {
   available: boolean;
   dryRun?: boolean;
@@ -199,6 +270,39 @@ export type FieldAlarmActuatorStatus = {
   lastError?: string | null;
   detail?: string;
   yx75r?: unknown;
+  tongxiao?: FieldAlarmTongxiaoStatus;
+};
+
+export type FieldAlarmTongxiaoStatus = {
+  deviceId: string;
+  mqttConnected: boolean;
+  boardOnline: boolean;
+  inSync: boolean;
+  desired?: {
+    revision?: number;
+    issued_ts?: string;
+    state?: string;
+    severity?: string;
+  } | null;
+  reported?: {
+    applied_revision?: number;
+    reported_ts?: string;
+    state?: string;
+    severity?: string;
+    firmware_version?: string;
+    last_error?: string | null;
+  } | null;
+  presence?: {
+    event_ts?: string;
+    status?: string;
+    meta?: {
+      fw?: string;
+      role?: string;
+    };
+  } | null;
+  presenceAgeSeconds: number | null;
+  presenceStaleSeconds: number;
+  voiceEnabled?: boolean;
 };
 
 export type FieldAlarmStatus = {
@@ -210,6 +314,7 @@ export type FieldAlarmStatus = {
   latestAlert: AlertSummaryItem | null;
   alerts: AlertSummaryItem[];
   actuator: FieldAlarmActuatorStatus;
+  competitionProfile?: CompetitionTiltProfile | null;
 };
 
 export type FieldAlarmAction = "alarm_on" | "alarm_off" | "silence" | "status" | "ack" | "resolve";
@@ -325,6 +430,7 @@ export type GpsPoint = {
   verticalMm?: number | null;
   latitude?: number | null;
   longitude?: number | null;
+  sampleCount?: number;
 };
 
 export type GpsSeries = {
@@ -710,6 +816,13 @@ export type ApiClient = {
       endTime: string;
       interval?: "raw" | "1m" | "5m" | "1h" | "1d";
     }) => Promise<TelemetrySeriesPoint[]>;
+    getSeriesBatch: (input: {
+      deviceId: string;
+      sensorKeys: string[];
+      startTime: string;
+      endTime: string;
+      interval?: "raw" | "1m" | "5m" | "1h" | "1d";
+    }) => Promise<Record<string, TelemetrySeriesPoint[]>>;
   };
   aiPredictions: {
     list: (input?: {
@@ -734,6 +847,11 @@ export type ApiClient = {
       pagination: { page: number; pageSize: number; total: number; totalPages: number };
       summary: { active: number; acked: number; resolved: number; high: number; critical: number };
     }>;
+    getEvents: (alertId: string) => Promise<{ alertId: string; events: AlertLifecycleEvent[] }>;
+    subscribe: (handlers: {
+      onEvent: (event: AlertStreamEvent) => void;
+      onError?: (error: Error) => void;
+    }) => () => void;
   };
   fieldAlarm: {
     getStatus: () => Promise<FieldAlarmStatus>;
@@ -742,9 +860,25 @@ export type ApiClient = {
       reason?: string;
       alertId?: string;
     }) => Promise<FieldAlarmActionResult>;
+    getCompetitionProfile: () => Promise<CompetitionTiltProfile | null>;
+    captureCompetitionBaseline: (input?: {
+      deviceIds?: string[];
+      thresholds?: Partial<CompetitionTiltProfile["thresholds"]>;
+    }) => Promise<{ profile: CompetitionTiltProfile; skipped: Array<{ deviceId: string; deviceName: string; reason: string }> }>;
+    updateCompetitionProfile: (input: {
+      enabled?: boolean;
+      thresholds?: Partial<CompetitionTiltProfile["thresholds"]>;
+    }) => Promise<CompetitionTiltProfile>;
   };
   gps: {
-    getSeries: (input: { deviceId: string; days?: number }) => Promise<GpsSeries>;
+    getSeries: (input: {
+      deviceId: string;
+      days?: number;
+      startTime?: string;
+      endTime?: string;
+      interval?: "1m" | "5m" | "1h" | "1d";
+      limit?: number;
+    }) => Promise<GpsSeries>;
     getDerivedAnalysis: (input: {
       deviceId: string;
       rangeLabel?: string;

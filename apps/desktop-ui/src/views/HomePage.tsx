@@ -18,7 +18,14 @@ type HomeAnomaly = {
   stationName: string;
   status: "online" | "warning" | "offline";
   time: string;
+  sortTime: number;
 };
+
+function formatLastSeen(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return { label: "从未上报", timestamp: -1 };
+  return { label: new Date(timestamp).toLocaleString("zh-CN"), timestamp };
+}
 
 function healthLabel(value: number) {
   if (value >= 90) return { text: "优秀", color: "#22c55e" };
@@ -60,14 +67,18 @@ export function HomePage() {
   const anomalies = useMemo<HomeAnomaly[]>(() => {
     const list = devices
       .filter((d) => d.status !== "online")
-      .map((d) => ({
-        id: d.id,
-        deviceName: d.name,
-        stationName: d.stationName,
-        status: d.status,
-        time: new Date(d.lastSeenAt).toLocaleString("zh-CN")
-      }))
-      .sort((a, b) => b.time.localeCompare(a.time));
+      .map((d) => {
+        const lastSeen = formatLastSeen(d.lastSeenAt);
+        return {
+          id: d.id,
+          deviceName: d.name,
+          stationName: d.stationId ? d.stationName : "未绑定监测点",
+          status: d.status,
+          time: lastSeen.label,
+          sortTime: lastSeen.timestamp
+        };
+      })
+      .sort((a, b) => b.sortTime - a.sortTime);
     return list.slice(0, 5);
   }, [devices]);
 
@@ -78,6 +89,10 @@ export function HomePage() {
   }, [stations]);
 
   const health = healthLabel(summary?.systemHealthPercent ?? 0);
+  const totalDeviceCount = summary?.totalDeviceCount;
+  const offlineDeviceCount = summary?.offlineDeviceCount;
+  const freshDeviceCount = summary?.freshDeviceCount;
+  const pendingAlertCount = summary?.pendingAlertCount;
 
   return (
     <div className="desk-page">
@@ -112,23 +127,27 @@ export function HomePage() {
               <div className="desk-home-metrics">
                 <div className="desk-home-metric">
                   <div className="desk-home-metric-label">监测点</div>
-                  <div className="desk-home-metric-value">{String(summary?.stationCount ?? 0)}</div>
+                  <div className="desk-home-metric-value">{summary ? String(summary.stationCount) : "—"}</div>
                   <div className="desk-home-metric-sub">覆盖区域：{areaSummary}</div>
                 </div>
                 <div className="desk-home-metric">
                   <div className="desk-home-metric-label">在线设备</div>
-                  <div className="desk-home-metric-value">{String(summary?.deviceOnlineCount ?? 0)}</div>
-                  <div className="desk-home-metric-sub">采集链路：正常</div>
+                  <div className="desk-home-metric-value">{summary ? String(summary.deviceOnlineCount) : "—"}</div>
+                  <div className="desk-home-metric-sub">
+                    总计 {totalDeviceCount ?? "—"} · 离线 {offlineDeviceCount ?? "—"}
+                  </div>
                 </div>
                 <div className="desk-home-metric">
                   <div className="desk-home-metric-label">今日预警</div>
-                  <div className="desk-home-metric-value">{String(summary?.alertCountToday ?? 0)}</div>
-                  <div className="desk-home-metric-sub">规则：默认策略</div>
+                  <div className="desk-home-metric-value">{summary ? String(summary.alertCountToday) : "—"}</div>
+                  <div className="desk-home-metric-sub">待处理告警 {pendingAlertCount ?? "—"}</div>
                 </div>
                 <div className="desk-home-metric">
                   <div className="desk-home-metric-label">系统健康度</div>
-                  <div className="desk-home-metric-value">{String(summary?.systemHealthPercent ?? 0)}%</div>
-                  <div className="desk-home-metric-sub">状态：{health.text}</div>
+                  <div className="desk-home-metric-value">{summary ? `${String(summary.systemHealthPercent)}%` : "—"}</div>
+                  <div className="desk-home-metric-sub">
+                    新鲜设备 {freshDeviceCount ?? "—"}/{totalDeviceCount ?? "—"}
+                  </div>
                 </div>
               </div>
             )}

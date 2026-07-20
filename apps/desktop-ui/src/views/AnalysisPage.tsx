@@ -1,20 +1,32 @@
 import clsx from "clsx";
-import { Button, Input, Modal, Select, Switch, Tag } from "antd";
+import { HistoryOutlined } from "@ant-design/icons";
+import { App as AntApp, Button, Input, InputNumber, Modal, Select, Switch, Tag } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import type { Device, DeviceStateSnapshot, FieldAlarmStatus, Station, TelemetrySeriesPoint } from "../api/client";
+import type {
+  AlertLifecycleEvent,
+  AlertSeverity,
+  AlertSummaryItem,
+  CompetitionTiltVector,
+  Device,
+  DeviceStateSnapshot,
+  Station,
+  TelemetrySeriesPoint
+} from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { MapSwitchPanel, type MapType } from "../components/MapSwitchPanel";
-import { RealMapView } from "../components/RealMapView";
+import { RealMapView, type RealMapPoint } from "../components/RealMapView";
 import { StatusTag } from "../components/StatusTag";
 import { TerrainBackdrop } from "../components/TerrainBackdrop";
 import { useAuthStore } from "../stores/authStore";
+import { useFieldAlarmStore } from "../stores/fieldAlarmStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { formatBeijingDate, formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
+import { fieldAlarmTerminalConnectionLabel } from "../utils/fieldAlarmTerminal";
 import { formatInstallLabelDisplay, formatWarningFlagDisplay } from "../utils/fieldIdentityDisplay";
 
 import "./analysis.css";
@@ -27,6 +39,54 @@ type AnomalyRow = {
   message: string;
   time: string;
 };
+
+type AnomalyKind = "availability" | "tilt" | "soil" | "conductivity" | "gnss" | "battery" | "device";
+
+type AnomalyAnalysis = {
+  isAnomaly: boolean;
+  level: AnomalyRow["level"];
+  kind: AnomalyKind;
+  message: string;
+};
+
+type CompetitionThresholdForm = {
+  highDeg: number;
+  criticalDeg: number;
+  recoveryDeg: number;
+  triggerPoints: number;
+  recoveryPoints: number;
+  updateStepDeg: number;
+};
+
+type ReviewConclusion = "confirmed_risk" | "environmental_disturbance" | "device_issue" | "false_positive";
+
+const DEFAULT_COMPETITION_THRESHOLDS: CompetitionThresholdForm = {
+  highDeg: 3,
+  criticalDeg: 7,
+  recoveryDeg: 1.5,
+  triggerPoints: 2,
+  recoveryPoints: 2,
+  updateStepDeg: 0.25,
+};
+
+const REVIEW_CONCLUSION_OPTIONS: Array<{ value: ReviewConclusion; label: string }> = [
+  { value: "confirmed_risk", label: "确认风险事件" },
+  { value: "environmental_disturbance", label: "现场扰动" },
+  { value: "device_issue", label: "设备或安装问题" },
+  { value: "false_positive", label: "误报" },
+];
+
+function lifecycleEventLabel(eventType: AlertLifecycleEvent["eventType"]): string {
+  if (eventType === "ALERT_TRIGGER") return "告警触发";
+  if (eventType === "ALERT_UPDATE") return "等级更新";
+  if (eventType === "ALERT_ACK") return "进入复核";
+  return "复核归档";
+}
+
+function lifecycleEventNote(event: AlertLifecycleEvent): string {
+  const evidence = asRecord(event.evidence);
+  return typeof evidence.notes === "string" && evidence.notes.trim() ? evidence.notes.trim() : "未填写备注";
+}
 
 function darkAxis() {
   return {
@@ -54,6 +114,29 @@ function readMetricNumber(metrics: Record<string, unknown> | undefined, key: str
   return null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function readTiltVector(value: unknown): CompetitionTiltVector | null {
+  const record = asRecord(value);
+  const x = readMetricNumber(record, "x");
+  const y = readMetricNumber(record, "y");
+  const z = readMetricNumber(record, "z");
+  return x == null || y == null || z == null ? null : { x, y, z };
+}
+
+function formatTiltValue(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}°` : "--";
+}
+
+function alertSeverityLabel(severity: AlertSeverity | undefined): string {
+  if (severity === "critical") return "严重风险";
+  if (severity === "high") return "高风险";
+  if (severity === "medium") return "中风险";
+  return severity === "low" ? "低风险" : "未判定";
+}
+
 function readMetricBoolean(metrics: Record<string, unknown> | undefined, key: string): boolean {
   const value = metrics?.[key];
   if (typeof value === "boolean") return value;
@@ -71,6 +154,41 @@ function normalizeIdentityClass(value?: string | null): string {
 
 function isFormalIdentityClass(value?: string | null): boolean {
   return normalizeIdentityClass(value) === "formal";
+}
+
+const XIAMEN_UNIVERSITY_DEFAULT_LOCATION = {
+  lat: 24.43803,
+  lng: 118.09631
+} as const;
+
+function isValidGpsCoordinatePair(latitude: number | null, longitude: number | null): boolean {
+  return (
+    latitude != null &&
+    longitude != null &&
+    Math.abs(latitude) > 0.0001 &&
+    Math.abs(longitude) > 0.0001 &&
+    Math.abs(latitude) <= 90 &&
+    Math.abs(longitude) <= 180
+  );
+}
+
+function isFormalFieldNode(device: Device): boolean {
+  if (!isFormalIdentityClass(device.identityClass) || device.type === "field_gateway") return false;
+  const identityText = [device.deviceRole, device.installLabel, device.nodeCode, device.name]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return identityText.includes("field") || identityText.includes("node") || identityText.includes("分节点");
+}
+
+function spreadDefaultMapLocation(index: number, total: number): { lat: number; lng: number } {
+  if (total <= 1) return XIAMEN_UNIVERSITY_DEFAULT_LOCATION;
+  const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+  const radius = 0.0012;
+  return {
+    lat: XIAMEN_UNIVERSITY_DEFAULT_LOCATION.lat + Math.sin(angle) * radius,
+    lng: XIAMEN_UNIVERSITY_DEFAULT_LOCATION.lng + Math.cos(angle) * radius
+  };
 }
 
 function deviceTypeLabel(type: Device["type"]): string {
@@ -484,39 +602,48 @@ function buildChartGroups(stations: Station[], level: AnalysisChartGroupLevel): 
   return Array.from(buckets.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function analyzeAnomaly(row: LiveSnapshotRow): { isAnomaly: boolean; level: AnomalyRow["level"]; message: string } {
+function analyzeAnomaly(row: LiveSnapshotRow, activeTiltAlert?: AlertSummaryItem): AnomalyAnalysis {
   const batteryPct = row.batteryPct;
   const tiltX = row.tiltXDeg;
   const tiltY = row.tiltYDeg;
   const staleMinutes = dayjs().diff(dayjs(row.updatedAt), "minute");
 
   if (row.device.status === "offline") {
-    return { isAnomaly: true, level: "critical", message: "离线：无数据上报" };
+    return { isAnomaly: true, level: "critical", kind: "availability", message: "离线：无数据上报" };
   }
   if (staleMinutes > 30) {
-    return { isAnomaly: true, level: "warn", message: `数据超时：${String(staleMinutes)} 分钟未更新` };
-  }
-  if (row.warningFlag) {
     return {
       isAnomaly: true,
       level: "warn",
-      message: `已触发预警，倾角 ${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`
+      kind: "availability",
+      message: `数据超时：${String(staleMinutes)} 分钟未更新`
+    };
+  }
+  if (activeTiltAlert) {
+    return {
+      isAnomaly: true,
+      level: activeTiltAlert.severity === "critical" ? "critical" : "warn",
+      kind: "tilt",
+      message: `${alertSeverityLabel(activeTiltAlert.severity)}：${activeTiltAlert.title || `相对基线倾角 ${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`}`
     };
   }
   if (row.device.status === "warning") {
-    return { isAnomaly: true, level: "warn", message: "设备状态为预警，需复核现场链路与测值" };
-  }
-  if (batteryPct != null && batteryPct <= 20) {
-    return { isAnomaly: true, level: "warn", message: `低电量：battery_pct=${batteryPct.toFixed(0)}%` };
-  }
-  if ((tiltX != null && Math.abs(tiltX) >= 120) || (tiltY != null && Math.abs(tiltY) >= 90)) {
     return {
       isAnomaly: true,
       level: "warn",
-      message: `姿态异常：tilt_x/tilt_y=${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`
+      kind: "device",
+      message: "设备状态为预警，需复核现场链路与测值"
     };
   }
-  return { isAnomaly: false, level: "info", message: "状态正常" };
+  if (batteryPct != null && batteryPct <= 20) {
+    return {
+      isAnomaly: true,
+      level: "warn",
+      kind: "battery",
+      message: `低电量：battery_pct=${batteryPct.toFixed(0)}%`
+    };
+  }
+  return { isAnomaly: false, level: "info", kind: "device", message: "状态正常" };
 }
 
 function buildTimeBuckets(count: number, unit: TelemetryBucketUnit, labelFormat: string): TimeBucketValue[] {
@@ -677,6 +804,7 @@ function summarizeHistoryGroups(groups: HistoryTrendGroup[]): {
 export function AnalysisPage() {
   const api = useApi();
   const navigate = useNavigate();
+  const { message } = AntApp.useApp();
   const reducedMotion = useSettingsStore((s) => s.reducedMotion);
   const terrainQuality = useSettingsStore((s) => s.terrainQuality);
   const user = useAuthStore((s) => s.user);
@@ -703,18 +831,28 @@ export function AnalysisPage() {
   const [conductivityTrendLoading, setConductivityTrendLoading] = useState(false);
   const [tiltTrendGroups, setTiltTrendGroups] = useState<TiltTrendGroup[]>([]);
   const [tiltTrendLoading, setTiltTrendLoading] = useState(false);
-  const [mapBottomMode, setMapBottomMode] = useState<MapBottomMode>("realtime");
+  const [mapBottomMode, setMapBottomMode] = useState<MapBottomMode>("history");
   const [historyMetricKey, setHistoryMetricKey] = useState<HistoryMetricKey>("tilt_x_deg");
   const [historyRange, setHistoryRange] = useState<HistoryRangeKey>("24h");
   const [realtimeTrendRange, setRealtimeTrendRange] = useState<RealtimeTrendRangeKey>("24h");
   const [historyTrendGroups, setHistoryTrendGroups] = useState<HistoryTrendGroup[]>([]);
   const [historyTrendLoading, setHistoryTrendLoading] = useState(false);
-  const [fieldAlarmStatus, setFieldAlarmStatus] = useState<FieldAlarmStatus | null>(null);
+  const fieldAlarmStatus = useFieldAlarmStore((state) => state.status);
+  const setFieldAlarmStatus = useFieldAlarmStore((state) => state.setStatus);
+  const applyFieldAlarmActionResult = useFieldAlarmStore((state) => state.applyActionResult);
   const [trendRefreshSeq, setTrendRefreshSeq] = useState(0);
   const [fieldAlarmReviewOpen, setFieldAlarmReviewOpen] = useState(false);
-  const [fieldAlarmReviewNote, setFieldAlarmReviewNote] = useState("现场复核确认，解除声光报警。");
+  const [fieldAlarmReviewNote, setFieldAlarmReviewNote] = useState("现场已确认，进入人工复核。");
+  const [fieldAlarmReviewConclusion, setFieldAlarmReviewConclusion] = useState<ReviewConclusion>("confirmed_risk");
   const [fieldAlarmReviewSubmitting, setFieldAlarmReviewSubmitting] = useState(false);
   const [fieldAlarmReviewError, setFieldAlarmReviewError] = useState("");
+  const [fieldAlarmEvents, setFieldAlarmEvents] = useState<AlertLifecycleEvent[]>([]);
+  const [competitionSetupOpen, setCompetitionSetupOpen] = useState(false);
+  const [competitionCaptureBusy, setCompetitionCaptureBusy] = useState(false);
+  const [competitionCaptureError, setCompetitionCaptureError] = useState("");
+  const [competitionThresholds, setCompetitionThresholds] = useState<CompetitionThresholdForm>(
+    DEFAULT_COMPETITION_THRESHOLDS
+  );
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -737,8 +875,9 @@ export function AnalysisPage() {
   }, []);
 
   const loadData = useCallback(
-    async (opts?: { silent?: boolean }) => {
+    async (opts?: { silent?: boolean; refreshTrends?: boolean }) => {
       const silent = opts?.silent ?? false;
+      const refreshTrends = opts?.refreshTrends ?? true;
       abortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
@@ -771,7 +910,7 @@ export function AnalysisPage() {
         setDeviceStates(nextStates);
         setFieldAlarmStatus(fieldAlarmResult);
         setLastUpdate(formatBeijingDateTime(new Date()));
-        setTrendRefreshSeq((value) => value + 1);
+        if (refreshTrends) setTrendRefreshSeq((value) => value + 1);
       } finally {
         if (!abort.signal.aborted) {
           setLoading(false);
@@ -779,8 +918,16 @@ export function AnalysisPage() {
         }
       }
     },
-    [api]
+    [api, setFieldAlarmStatus]
   );
+
+  const refreshFieldAlarmStatus = useCallback(async () => {
+    try {
+      setFieldAlarmStatus(await api.fieldAlarm.getStatus());
+    } catch {
+      // Keep the accepted local transition; the regular refresh loop will retry.
+    }
+  }, [api, setFieldAlarmStatus]);
 
   useEffect(() => {
     void loadData();
@@ -791,9 +938,11 @@ export function AnalysisPage() {
 
   useEffect(() => {
     if (!autoRefresh) return;
+    let refreshCount = 0;
     const t = window.setInterval(() => {
-      void loadData({ silent: true });
-    }, 15000);
+      refreshCount += 1;
+      void loadData({ silent: true, refreshTrends: refreshCount % 3 === 0 });
+    }, 5000);
     return () => {
       window.clearInterval(t);
     };
@@ -1048,10 +1197,7 @@ export function AnalysisPage() {
   useEffect(() => {
     const conductivityDevices = visibleDevices.filter((device) => {
       const snapshot = deviceStates[device.id];
-      return (
-        isSoilSensorDevice(device, snapshot) &&
-        readMetricNumber(snapshot?.metrics, "electrical_conductivity_us_cm") != null
-      );
+      return isFormalFieldNode(device) || isSoilSensorDevice(device, snapshot);
     });
     const { buckets, unit, interval, startTime, endTime } = realtimeTrendWindow;
     const trendSources = useNodeLevelTrend
@@ -1899,31 +2045,79 @@ export function AnalysisPage() {
       ? `${chartScopeLabel}姿态趋势（${realtimeTrendWindow.label}）`
       : `${chartScopeLabel}姿态实时剖面（倾角 X / 倾角 Y）`;
 
-  const rainfallOption = useMemo(() => {
-    const labels = rainfallTrend.map((point) => point.label);
-    const data = rainfallTrend.map((point) => point.value);
-
+  const dataFreshnessOption = useMemo(() => {
+    const rows = liveSnapshotRows
+      .map((row) => {
+        const updatedAt = dayjs(row.updatedAt);
+        const ageSeconds = updatedAt.isValid() ? Math.max(0, dayjs(now).diff(updatedAt, "second")) : 300;
+        return {
+          label: fieldNodeLegendLabel(row.device),
+          ageSeconds,
+          status: row.device.status
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const axisMax = Math.max(15, Math.ceil((Math.max(0, ...rows.map((row) => row.ageSeconds)) + 2) / 5) * 5);
     return {
       backgroundColor: "transparent",
       textStyle: { color: "rgba(226, 232, 240, 0.9)" },
-      grid: { left: "0%", right: "0%", top: 30, bottom: 0, containLabel: true },
+      grid: { left: "0%", right: 42, top: 20, bottom: 0, containLabel: true },
       tooltip: { trigger: "axis", ...darkTooltip() },
-      xAxis: { type: "category", data: labels, ...darkAxis() },
-      yAxis: { type: "value", ...darkAxis(), axisLabel: { ...darkAxis().axisLabel, margin: 6 } },
+      xAxis: {
+        type: "value",
+        min: 0,
+        max: axisMax,
+        name: "秒",
+        nameTextStyle: { color: "rgba(226, 232, 240, 0.72)" },
+        ...darkAxis(),
+        axisLabel: { ...darkAxis().axisLabel, margin: 6 }
+      },
+      yAxis: { type: "category", data: rows.map((row) => row.label), ...darkAxis() },
       series: [
         {
-          name: "雨量",
+          name: "距最后上报",
           type: "bar",
-          data,
-          itemStyle: { color: "rgba(34, 211, 238, 0.85)" },
-          barWidth: 14
+          data: rows.map((row) => ({
+            value: row.ageSeconds,
+            itemStyle: {
+              color:
+                row.status === "offline" || row.ageSeconds > 30
+                  ? "rgba(248, 113, 113, 0.88)"
+                  : row.ageSeconds > 10
+                    ? "rgba(251, 191, 36, 0.88)"
+                    : "rgba(45, 212, 191, 0.88)"
+            }
+          })),
+          barWidth: 16,
+          barMinHeight: 4,
+          label: {
+            show: true,
+            position: "right",
+            color: "rgba(226, 232, 240, 0.9)",
+            formatter: "{c}s"
+          },
+          markLine: {
+            silent: true,
+            symbol: "none",
+            lineStyle: { color: "rgba(251, 191, 36, 0.72)", type: "dashed" },
+            label: { color: "rgba(251, 191, 36, 0.92)", formatter: "10s 目标" },
+            data: [{ xAxis: 10 }]
+          }
         }
       ]
     };
-  }, [rainfallTrend]);
+  }, [liveSnapshotRows, now]);
+
+  const activeTiltAlertByDevice = useMemo(() => {
+    const result = new Map<string, AlertSummaryItem>();
+    for (const alert of fieldAlarmStatus?.alerts ?? []) {
+      if (alert.status === "active" && alert.deviceId) result.set(alert.deviceId, alert);
+    }
+    return result;
+  }, [fieldAlarmStatus?.alerts]);
 
   const riskDistributionOption = useMemo(() => {
-    const riskRows = liveSnapshotRows.map((row) => analyzeAnomaly(row));
+    const riskRows = liveSnapshotRows.map((row) => analyzeAnomaly(row, activeTiltAlertByDevice.get(row.device.id)));
     const high = riskRows.filter((analysis) => analysis.level === "critical").length;
     const mid = riskRows.filter((analysis) => analysis.level === "warn").length;
     const low = riskRows.filter((analysis) => analysis.level === "info").length;
@@ -1964,14 +2158,14 @@ export function AnalysisPage() {
         }
       ]
     };
-  }, [liveSnapshotRows]);
+  }, [activeTiltAlertByDevice, liveSnapshotRows]);
 
   const anomalyDetails = useMemo(
     () =>
       liveSnapshotRows
-        .map((row) => ({ row, analysis: analyzeAnomaly(row) }))
+        .map((row) => ({ row, analysis: analyzeAnomaly(row, activeTiltAlertByDevice.get(row.device.id)) }))
         .filter((entry) => entry.analysis.isAnomaly),
-    [liveSnapshotRows]
+    [activeTiltAlertByDevice, liveSnapshotRows]
   );
 
   const anomalies: AnomalyRow[] = useMemo(() => {
@@ -2009,49 +2203,62 @@ export function AnalysisPage() {
   );
   const freshDeviceCount = freshSnapshotRows.length;
   const staleDeviceCount = Math.max(0, visibleDevices.length - freshDeviceCount);
-  const batteryReportingCount = useMemo(
-    () => liveSnapshotRows.filter((row) => row.batteryPct != null).length,
-    [liveSnapshotRows]
+  const freshTiltCount = useMemo(
+    () => freshSnapshotRows.filter((row) => row.tiltXDeg != null || row.tiltYDeg != null).length,
+    [freshSnapshotRows]
   );
-  const lowBatteryCount = useMemo(
-    () => liveSnapshotRows.filter((row) => row.batteryPct != null && row.batteryPct <= 20).length,
-    [liveSnapshotRows]
-  );
-  const warningFlagCount = useMemo(() => liveSnapshotRows.filter((row) => row.warningFlag).length, [liveSnapshotRows]);
-  const tiltAlertCount = useMemo(
-    () =>
-      liveSnapshotRows.filter(
-        (row) => (row.tiltXDeg != null && Math.abs(row.tiltXDeg) >= 120) || (row.tiltYDeg != null && Math.abs(row.tiltYDeg) >= 90)
-      ).length,
-    [liveSnapshotRows]
-  );
+  const activeTiltAlertCount = fieldAlarmStatus?.activeCount ?? 0;
+  const pendingTiltReviewCount = fieldAlarmStatus?.ackedCount ?? 0;
 
   const sensorTypeOption = useMemo(() => {
-    const abnormalIds = new Set(anomalyDetails.map((entry) => entry.row.device.id));
-    const categories: Array<{ label: string; matches: (device: Device) => boolean }> = [
+    type SensorOverviewKind = "soil" | "tilt" | "conductivity" | "gnss";
+    const anomalyKindsByDevice = new Map<string, Set<AnomalyKind>>();
+    for (const entry of anomalyDetails) {
+      const kinds = anomalyKindsByDevice.get(entry.row.device.id) ?? new Set<AnomalyKind>();
+      kinds.add(entry.analysis.kind);
+      anomalyKindsByDevice.set(entry.row.device.id, kinds);
+    }
+    const activeTiltAlertIds = new Set(
+      (fieldAlarmStatus?.alerts ?? [])
+        .filter((alert) => alert.status === "active")
+        .map((alert) => alert.deviceId)
+        .filter((deviceId): deviceId is string => Boolean(deviceId))
+    );
+    const pendingTiltReviewIds = new Set(
+      (fieldAlarmStatus?.alerts ?? [])
+        .filter((alert) => alert.status === "acked")
+        .map((alert) => alert.deviceId)
+        .filter((deviceId): deviceId is string => Boolean(deviceId))
+    );
+    const categories: Array<{
+      key: SensorOverviewKind;
+      label: string;
+      matches: (device: Device) => boolean;
+    }> = [
       {
+        key: "soil",
         label: "土壤温湿度",
         matches: (device) => isSoilSensorDevice(device, deviceStates[device.id])
       },
       {
+        key: "tilt",
         label: "倾角",
         matches: (device) => isTiltSensorDevice(device, deviceStates[device.id])
       },
       {
+        key: "conductivity",
         label: "土壤电导率",
         matches: (device) =>
           readMetricNumber(deviceStates[device.id]?.metrics, "electrical_conductivity_us_cm") != null
       },
       {
+        key: "gnss",
         label: "GNSS",
         matches: (device) => {
           const metrics = deviceStates[device.id]?.metrics;
-          return (
-            readMetricNumber(metrics, "gps_latitude") != null ||
-            readMetricNumber(metrics, "gps_longitude") != null ||
-            readMetricNumber(metrics, "latitude") != null ||
-            readMetricNumber(metrics, "longitude") != null
-          );
+          const latitude = readMetricNumber(metrics, "gps_latitude") ?? readMetricNumber(metrics, "latitude");
+          const longitude = readMetricNumber(metrics, "gps_longitude") ?? readMetricNumber(metrics, "longitude");
+          return isValidGpsCoordinatePair(latitude, longitude);
         }
       }
     ];
@@ -2061,7 +2268,15 @@ export function AnalysisPage() {
         return {
           label: category.label,
           total: matched.length,
-          abnormal: matched.filter((device) => abnormalIds.has(device.id)).length
+          abnormal: matched.filter((device) => {
+            const kinds = anomalyKindsByDevice.get(device.id);
+            if (kinds?.has("availability")) return true;
+            if (category.key === "tilt" && activeTiltAlertIds.has(device.id)) return true;
+            return kinds?.has(category.key) ?? false;
+          }).length,
+          pendingReview: category.key === "tilt"
+            ? matched.filter((device) => pendingTiltReviewIds.has(device.id)).length
+            : 0
         };
       })
       .filter((item) => item.total > 0);
@@ -2070,14 +2285,7 @@ export function AnalysisPage() {
       backgroundColor: "transparent",
       textStyle: { color: "rgba(226, 232, 240, 0.9)" },
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, ...darkTooltip() },
-      legend: {
-        top: 2,
-        left: "center",
-        textStyle: { color: "rgba(226, 232, 240, 0.82)" },
-        itemWidth: 10,
-        itemHeight: 10
-      },
-      grid: { left: "8%", right: "6%", top: 28, bottom: 10, containLabel: true },
+      grid: { left: "8%", right: "6%", top: 8, bottom: 10, containLabel: true },
       xAxis: { type: "value", ...darkAxis() },
       yAxis: {
         type: "category",
@@ -2094,15 +2302,22 @@ export function AnalysisPage() {
           barWidth: 12
         },
         {
-          name: "异常",
+          name: "异常 / 告警",
           type: "bar",
           data: items.map((item) => item.abnormal),
           itemStyle: { color: "rgba(239, 68, 68, 0.82)" },
           barWidth: 12
+        },
+        {
+          name: "待复核",
+          type: "bar",
+          data: items.map((item) => item.pendingReview),
+          itemStyle: { color: "rgba(251, 191, 36, 0.86)" },
+          barWidth: 12
         }
       ]
     };
-  }, [anomalyDetails, deviceStates, visibleDevices]);
+  }, [anomalyDetails, deviceStates, fieldAlarmStatus?.alerts, visibleDevices]);
 
   const freshSoilReadings = useMemo(() => {
     return freshSnapshotRows
@@ -2145,7 +2360,7 @@ export function AnalysisPage() {
       rainDeviceCount > 0
         ? `${realtimeTrendWindow.label}累计雨量 ${rainfallSummary.total.toFixed(2)} mm。`
         : "当前未接入雨量传感器，不生成雨量数值。",
-      `${batteryReportingCount > 0 ? `低电量 ${lowBatteryCount} 个` : "电量指标未接入"}，已触发预警 ${warningFlagCount} 个，姿态超阈 ${tiltAlertCount} 个。`,
+      `姿态监测：15 分钟内有效倾角 ${freshTiltCount}/${visibleDevices.length}，活动告警 ${fieldAlarmStatus?.activeCount ?? 0} 个，待复核 ${fieldAlarmStatus?.ackedCount ?? 0} 个。`,
       topAnomaly
         ? `优先处置：${topAnomaly.deviceName}，${topAnomaly.message}。`
         : strongestTilt
@@ -2154,13 +2369,13 @@ export function AnalysisPage() {
     ];
     if (fieldAlarmStatus?.active) {
       summary.unshift(
-        `现场声光报警已触发：${fieldAlarmStatus.latestAlert?.title || "RK3568 声光报警器处于动作状态"}，请先人工复核现场。`
+        `现场告警已触发：${fieldAlarmStatus.latestAlert?.title || "Tongxiao RK2206 告警终端处于动作状态"}，请先人工复核现场。`
       );
     } else if (fieldAlarmStatus?.silenced) {
       summary.unshift("现场声光报警已静音，事件仍处于人工复核窗口。");
     }
     return summary;
-  }, [activeArea, anomalies, batteryReportingCount, fieldAlarmStatus, freshDeviceCount, freshSoilReadings, liveSnapshotRows, lowBatteryCount, rainDeviceCount, rainfallSummary.total, realtimeTrendWindow.label, staleDeviceCount, stats.nodes, stats.offline, stats.online, tiltAlertCount, visibleDevices.length, warningCount, warningFlagCount]);
+  }, [activeArea, anomalies, fieldAlarmStatus, freshDeviceCount, freshSoilReadings, freshTiltCount, liveSnapshotRows, rainDeviceCount, rainfallSummary.total, realtimeTrendWindow.label, staleDeviceCount, stats.nodes, stats.offline, stats.online, visibleDevices.length, warningCount]);
 
   const physicalAlarmActive = fieldAlarmStatus?.active ?? false;
   const hasOffline = stats.offline > 0;
@@ -2180,46 +2395,191 @@ export function AnalysisPage() {
     return devices.find((device) => device.id === deviceId)?.name ?? deviceId;
   }, [devices, fieldAlarmStatus?.latestAlert?.deviceId]);
 
+  useEffect(() => {
+    if (!fieldAlarmReviewOpen || !fieldAlarmAlertId) {
+      setFieldAlarmEvents([]);
+      return;
+    }
+    let cancelled = false;
+    void api.alerts
+      .getEvents(fieldAlarmAlertId)
+      .then((result) => {
+        if (!cancelled) setFieldAlarmEvents(result.events);
+      })
+      .catch(() => {
+        if (!cancelled) setFieldAlarmEvents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, fieldAlarmAlertId, fieldAlarmReviewOpen]);
+
+  const fieldAlarmReviewData = useMemo(() => {
+    const alert = fieldAlarmStatus?.latestAlert ?? null;
+    const profile = fieldAlarmStatus?.competitionProfile ?? null;
+    const deviceId = alert?.deviceId ?? null;
+    const evidenceEvent = fieldAlarmEvents
+      .filter((event) => event.eventType === "ALERT_TRIGGER" || event.eventType === "ALERT_UPDATE")
+      .slice()
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+    const evidence = asRecord(evidenceEvent?.evidence ?? alert?.evidence);
+    const live = profile?.live?.find((item) => item.deviceId === deviceId)?.deviation ?? null;
+    const profileDevice = profile?.devices.find((item) => item.deviceId === deviceId) ?? null;
+    const baseline = readTiltVector(evidence.baseline) ?? live?.baseline ?? profileDevice?.baseline ?? null;
+    const current = readTiltVector(evidence.current) ?? live?.current ?? null;
+    const delta = readTiltVector(evidence.delta) ?? live?.delta ?? null;
+    const thresholdsEvidence = asRecord(evidence.thresholds);
+    const thresholds = {
+      highDeg: readMetricNumber(thresholdsEvidence, "highDeg") ?? profile?.thresholds.highDeg ?? 3,
+      criticalDeg: readMetricNumber(thresholdsEvidence, "criticalDeg") ?? profile?.thresholds.criticalDeg ?? 7,
+      recoveryDeg: readMetricNumber(thresholdsEvidence, "recoveryDeg") ?? profile?.thresholds.recoveryDeg ?? 1.5,
+      recoveryPoints: readMetricNumber(thresholdsEvidence, "recoveryPoints") ?? profile?.thresholds.recoveryPoints ?? 2,
+    };
+    const maxDeviationDeg = readMetricNumber(evidence, "maxDeviationDeg") ?? live?.maxDeviationDeg ?? null;
+    const maxAxisRaw = typeof evidence.maxAxis === "string" ? evidence.maxAxis.toLowerCase() : live?.maxAxis;
+    const maxAxis = maxAxisRaw === "x" || maxAxisRaw === "y" || maxAxisRaw === "z" ? maxAxisRaw.toUpperCase() : "--";
+    const triggerThreshold = alert?.severity === "critical" ? thresholds.criticalDeg : thresholds.highDeg;
+    const firstTriggerAt = fieldAlarmEvents
+      .filter((event) => event.eventType === "ALERT_TRIGGER")
+      .slice()
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0]?.createdAt ?? alert?.lastEventAt ?? null;
+    const tongxiao = asRecord(fieldAlarmStatus?.actuator.tongxiao);
+    const reported = asRecord(tongxiao.reported);
+    const boardOnline = tongxiao.boardOnline === true;
+    const actuatorState = typeof reported.state === "string"
+      ? reported.state
+      : typeof fieldAlarmStatus?.actuator.state === "string"
+        ? fieldAlarmStatus.actuator.state
+        : "unknown";
+
+    return {
+      alert,
+      baseline,
+      current,
+      delta,
+      thresholds,
+      maxDeviationDeg,
+      maxAxis,
+      triggerThreshold,
+      exceededBy: maxDeviationDeg == null ? null : Math.max(0, maxDeviationDeg - triggerThreshold),
+      firstTriggerAt,
+      boardOnline,
+      actuatorState,
+      concurrentAlerts: Math.max(0, (fieldAlarmStatus?.alerts.length ?? 0) - 1),
+      eventCount: fieldAlarmEvents.length,
+    };
+  }, [fieldAlarmEvents, fieldAlarmStatus]);
+
+  const openCompetitionSetup = () => {
+    setCompetitionThresholds(fieldAlarmStatus?.competitionProfile?.thresholds ?? DEFAULT_COMPETITION_THRESHOLDS);
+    setCompetitionCaptureError("");
+    setCompetitionSetupOpen(true);
+  };
+
+  const captureCompetitionBaseline = async () => {
+    if (competitionCaptureBusy) return;
+    setCompetitionCaptureBusy(true);
+    setCompetitionCaptureError("");
+    try {
+      const result = await api.fieldAlarm.captureCompetitionBaseline({ thresholds: competitionThresholds });
+      if (fieldAlarmStatus) {
+        setFieldAlarmStatus({ ...fieldAlarmStatus, competitionProfile: result.profile });
+      }
+      if (result.skipped.length > 0) {
+        setCompetitionCaptureError(
+          `已采集 ${result.profile.devices.length} 个节点；${result.skipped.map((item) => `${item.deviceName}：${item.reason}`).join("；")}`
+        );
+      } else {
+        setCompetitionSetupOpen(false);
+      }
+    } catch (error) {
+      setCompetitionCaptureError(error instanceof Error ? error.message : "倾角基线采集失败");
+    } finally {
+      setCompetitionCaptureBusy(false);
+    }
+  };
+
   const acknowledgeFieldAlarm = useCallback(async () => {
     setFieldAlarmReviewSubmitting(true);
     setFieldAlarmReviewError("");
     try {
-      await api.fieldAlarm.sendAction({
+      const result = await api.fieldAlarm.sendAction({
         action: "ack",
         reason: fieldAlarmReviewNote.trim() || "人工确认已到场复核，先静音保留事件。",
         ...(fieldAlarmAlertId ? { alertId: fieldAlarmAlertId } : {})
       });
-      await loadData({ silent: true });
+      if (!result.accepted) throw new Error(result.actuator.lastError ?? "现场告警终端未接受静音命令");
+      applyFieldAlarmActionResult(result, fieldAlarmAlertId);
+      void refreshFieldAlarmStatus();
+      message.success("已静音，告警保留待复核");
     } catch (err) {
-      setFieldAlarmReviewError(err instanceof Error ? err.message : "复核静音失败，请检查 API 或 RK3568 执行器连接。");
+      setFieldAlarmReviewError(err instanceof Error ? err.message : "复核静音失败，请检查 API 或 Tongxiao RK2206 连接。");
     } finally {
       setFieldAlarmReviewSubmitting(false);
     }
-  }, [api, fieldAlarmAlertId, fieldAlarmReviewNote, loadData]);
+  }, [api, applyFieldAlarmActionResult, fieldAlarmAlertId, fieldAlarmReviewNote, message, refreshFieldAlarmStatus]);
 
   const resolveFieldAlarm = useCallback(async () => {
     setFieldAlarmReviewSubmitting(true);
     setFieldAlarmReviewError("");
     try {
-      await api.fieldAlarm.sendAction({
+      const conclusionLabel = REVIEW_CONCLUSION_OPTIONS.find((option) => option.value === fieldAlarmReviewConclusion)?.label ?? "已复核";
+      const reviewNote = fieldAlarmReviewNote.trim() || "现场复核已完成。";
+      const result = await api.fieldAlarm.sendAction({
         action: "resolve",
-        reason: fieldAlarmReviewNote.trim() || "现场复核确认，解除声光报警。",
+        reason: `[复核结论：${conclusionLabel}] ${reviewNote}`,
         ...(fieldAlarmAlertId ? { alertId: fieldAlarmAlertId } : {})
       });
+      if (!result.accepted) throw new Error(result.actuator.lastError ?? "现场告警终端未接受解除命令");
+      applyFieldAlarmActionResult(result, fieldAlarmAlertId);
       setFieldAlarmReviewOpen(false);
-      await loadData({ silent: true });
+      void refreshFieldAlarmStatus();
+      const thresholds = fieldAlarmStatus?.competitionProfile?.thresholds ?? DEFAULT_COMPETITION_THRESHOLDS;
+      message.success(
+        `复核已完成并归档，现场警报已解除。回到倾角基线 ${String(thresholds.recoveryDeg)}° 内连续 ${String(thresholds.recoveryPoints)} 个点后自动重新布防；也可以重新采集基线。`,
+        6
+      );
     } catch (err) {
-      setFieldAlarmReviewError(err instanceof Error ? err.message : "解除警报失败，请检查 API 或 RK3568 执行器连接。");
+      setFieldAlarmReviewError(err instanceof Error ? err.message : "解除警报失败，请检查 API 或 Tongxiao RK2206 连接。");
     } finally {
       setFieldAlarmReviewSubmitting(false);
     }
-  }, [api, fieldAlarmAlertId, fieldAlarmReviewNote, loadData]);
+  }, [api, applyFieldAlarmActionResult, fieldAlarmAlertId, fieldAlarmReviewConclusion, fieldAlarmReviewNote, fieldAlarmStatus?.competitionProfile?.thresholds, message, refreshFieldAlarmStatus]);
 
   const selectedStations = useMemo(() => {
     if (!selectedStationIds.length) return [];
     const set = new Set(selectedStationIds);
     return visibleStations.filter((s) => set.has(s.id));
   }, [selectedStationIds, visibleStations]);
+
+  const mapPoints = useMemo<RealMapPoint[]>(() => {
+    const stationById = new Map(visibleStations.map((station) => [station.id, station] as const));
+    const fieldNodes = visibleDevices
+      .filter(isFormalFieldNode)
+      .slice()
+      .sort((a, b) => fieldNodeLegendLabel(a).localeCompare(fieldNodeLegendLabel(b)));
+
+    return fieldNodes.map((device, index) => {
+      const station = stationById.get(device.stationId);
+      const snapshot = deviceStates[device.id];
+      const latitude = readMetricNumber(snapshot?.metrics, "gps_latitude");
+      const longitude = readMetricNumber(snapshot?.metrics, "gps_longitude");
+      const hasValidGps = isValidGpsCoordinatePair(latitude, longitude);
+      const fallback = spreadDefaultMapLocation(index, fieldNodes.length);
+      return {
+        id: device.id,
+        stationId: device.stationId,
+        name: fieldNodeLegendLabel(device),
+        stationName: station?.name ?? device.stationName,
+        risk: station?.risk ?? "low",
+        status: device.status,
+        lat: hasValidGps ? latitude! : fallback.lat,
+        lng: hasValidGps ? longitude! : fallback.lng,
+        locationSource: hasValidGps ? "gps" : "default",
+        lastSeenAt: snapshot?.updatedAt ?? device.lastSeenAt
+      };
+    });
+  }, [deviceStates, visibleDevices, visibleStations]);
 
   useEffect(() => {
     if (!selectedStationIds.length) {
@@ -2358,6 +2718,22 @@ export function AnalysisPage() {
             <Tag color={hasWarn ? "orange" : "blue"}>异常 {warningCount}</Tag>
             <Tag color={hasOffline ? "red" : "blue"}>离线 {stats.offline}</Tag>
             {fieldAlarmStatus?.active ? <Tag color="red">现场声光报警</Tag> : null}
+            <Button
+              size="small"
+              className="desk-analysis-baseline-button"
+              disabled={Boolean(fieldAlarmStatus?.active || fieldAlarmStatus?.silenced)}
+              onClick={openCompetitionSetup}
+            >
+              {fieldAlarmStatus?.competitionProfile ? "重采倾角基线" : "采集倾角基线"}
+            </Button>
+            <Button
+              size="small"
+              className="desk-analysis-baseline-button"
+              icon={<HistoryOutlined />}
+              onClick={() => navigate("/app/review-archive")}
+            >
+              复核档案
+            </Button>
             <span className="desk-analysis-meta-muted">更新 {lastUpdate || "—"}</span>
           </div>
         </div>
@@ -2388,16 +2764,20 @@ export function AnalysisPage() {
         <div className={`desk-analysis-field-alarm${fieldAlarmStatus.active ? " is-active" : " is-silenced"}`}>
           <div>
             <div className="desk-analysis-field-alarm-k">
-              {fieldAlarmStatus.active ? "现场声光报警已触发" : "现场报警已静音，等待人工复核"}
+              {fieldAlarmStatus.active
+                ? fieldAlarmReviewData.boardOnline && fieldAlarmReviewData.actuatorState === "active"
+                  ? "现场声光报警已确认"
+                  : "监测告警已触发，现场终端未确认"
+                : "告警已进入复核，等待人工确认"}
             </div>
             <div className="desk-analysis-field-alarm-v">
-              {fieldAlarmStatus.latestAlert?.title || "RK3568 声光报警器动作状态已由平台捕获"}
+              {fieldAlarmStatus.latestAlert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}
             </div>
           </div>
           <div className="desk-analysis-field-alarm-meta">
             <span>活跃 {fieldAlarmStatus.activeCount}</span>
             <span>复核 {fieldAlarmStatus.ackedCount}</span>
-            <span>{fieldAlarmStatus.actuator.available ? "RK3568 已连接" : "执行器未连接"}</span>
+            <span>{fieldAlarmTerminalConnectionLabel(fieldAlarmStatus.actuator)}</span>
             <Button
               size="small"
               danger={fieldAlarmStatus.active}
@@ -2417,7 +2797,7 @@ export function AnalysisPage() {
         className="desk-analysis-review-modal"
         open={fieldAlarmReviewOpen}
         title="人工确认复核"
-        width={560}
+        width={760}
         onCancel={() => {
           if (!fieldAlarmReviewSubmitting) setFieldAlarmReviewOpen(false);
         }}
@@ -2430,7 +2810,7 @@ export function AnalysisPage() {
               void acknowledgeFieldAlarm();
             }}
           >
-            先静音，继续复核
+            确认并进入复核
           </Button>,
           <Button
             key="resolve"
@@ -2441,11 +2821,61 @@ export function AnalysisPage() {
               void resolveFieldAlarm();
             }}
           >
-            确认复核并解除警报
+            完成复核并归档
           </Button>
         ]}
       >
         <div className="desk-analysis-review-body">
+          <div className="desk-analysis-review-alert">
+            <div className="desk-analysis-review-alert-head">
+              <Tag color={fieldAlarmReviewData.alert?.severity === "critical" ? "red" : "volcano"}>
+                {alertSeverityLabel(fieldAlarmReviewData.alert?.severity)}
+              </Tag>
+              <span title={fieldAlarmReviewData.alert?.alertId ?? undefined}>
+                告警编号 {fieldAlarmReviewData.alert?.alertId ?? "未记录"}
+              </span>
+            </div>
+            <strong>{fieldAlarmReviewData.alert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}</strong>
+            <p>{fieldAlarmReviewData.alert?.message || "真实监测数据达到告警阈值，请复核现场姿态与设备状态。"}</p>
+          </div>
+
+          <div className="desk-analysis-review-deviation">
+            <div className="desk-analysis-review-deviation-main">
+              <span>最大相对偏移</span>
+              <strong>
+                {fieldAlarmReviewData.maxDeviationDeg == null
+                  ? "--"
+                  : `${fieldAlarmReviewData.maxDeviationDeg.toFixed(2)}°`}
+              </strong>
+              <small>
+                主变化轴 {fieldAlarmReviewData.maxAxis} · 超出当前等级阈值 {fieldAlarmReviewData.exceededBy == null ? "--" : `${fieldAlarmReviewData.exceededBy.toFixed(2)}°`}
+              </small>
+            </div>
+            <div className="desk-analysis-review-thresholds">
+              <div><span>高风险阈值</span><strong>{fieldAlarmReviewData.thresholds.highDeg.toFixed(1)}°</strong></div>
+              <div><span>严重风险阈值</span><strong>{fieldAlarmReviewData.thresholds.criticalDeg.toFixed(1)}°</strong></div>
+              <div><span>恢复范围</span><strong>≤ {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}°</strong></div>
+            </div>
+          </div>
+
+          <div className="desk-analysis-review-vectors" aria-label="倾角基线、当前值和偏移">
+            <div className="desk-analysis-review-vector-row is-head">
+              <span>姿态</span><span>X 轴</span><span>Y 轴</span><span>Z 轴</span>
+            </div>
+            {[
+              { label: "采集基线", value: fieldAlarmReviewData.baseline },
+              { label: "触发姿态", value: fieldAlarmReviewData.current },
+              { label: "相对偏移", value: fieldAlarmReviewData.delta },
+            ].map((row) => (
+              <div key={row.label} className="desk-analysis-review-vector-row">
+                <strong>{row.label}</strong>
+                <span>{formatTiltValue(row.value?.x)}</span>
+                <span>{formatTiltValue(row.value?.y)}</span>
+                <span>{formatTiltValue(row.value?.z)}</span>
+              </div>
+            ))}
+          </div>
+
           <div className="desk-analysis-review-grid">
             <div>
               <span>区域</span>
@@ -2457,27 +2887,174 @@ export function AnalysisPage() {
             </div>
             <div>
               <span>状态</span>
-              <strong>{fieldAlarmStatus?.active ? "现场声光报警中" : fieldAlarmStatus?.silenced ? "已静音待复核" : "正常"}</strong>
+              <strong>{fieldAlarmStatus?.active ? "监测告警处理中" : fieldAlarmStatus?.silenced ? "已进入复核" : "正常"}</strong>
+            </div>
+            <div>
+              <span>首次触发</span>
+              <strong>{fieldAlarmReviewData.firstTriggerAt ? formatBeijingDateTime(fieldAlarmReviewData.firstTriggerAt) : "未记录"}</strong>
             </div>
             <div>
               <span>最近事件</span>
               <strong>{fieldAlarmLastEventAt ? formatBeijingDateTime(fieldAlarmLastEventAt) : "未记录"}</strong>
             </div>
+            <div>
+              <span>现场终端</span>
+              <strong>{fieldAlarmReviewData.boardOnline ? `RK2206 在线 · ${fieldAlarmReviewData.actuatorState}` : "RK2206 离线"}</strong>
+            </div>
+            <div>
+              <span>其它待处理告警</span>
+              <strong>{fieldAlarmReviewData.concurrentAlerts} 条</strong>
+            </div>
+            <div>
+              <span>生命周期事件</span>
+              <strong>{fieldAlarmReviewData.eventCount > 0 ? `${fieldAlarmReviewData.eventCount} 条` : "读取中"}</strong>
+            </div>
           </div>
-          <div className="desk-analysis-review-alert">
-            {fieldAlarmStatus?.latestAlert?.title || "RK3568 声光报警器动作状态已由平台捕获"}
-          </div>
-          <Input.TextArea
-            rows={3}
-            value={fieldAlarmReviewNote}
-            maxLength={500}
-            showCount
-            onChange={(event) => setFieldAlarmReviewNote(event.target.value)}
-          />
+          {fieldAlarmEvents.length ? (
+            <div className="desk-analysis-review-lifecycle">
+              <div className="desk-analysis-review-section-head">
+                <strong>当前告警生命周期</strong>
+                <span>{fieldAlarmEvents.length} 条真实事件</span>
+              </div>
+              <div className="desk-analysis-review-lifecycle-list">
+                {fieldAlarmEvents
+                  .slice()
+                  .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+                  .map((event) => (
+                    <div key={event.eventId} className="desk-analysis-review-lifecycle-item">
+                      <i className={`is-${event.eventType.toLowerCase().replace("alert_", "")}`} />
+                      <div>
+                        <strong>{lifecycleEventLabel(event.eventType)}</strong>
+                        <span>{formatBeijingDateTime(event.createdAt)}</span>
+                        {event.eventType === "ALERT_ACK" || event.eventType === "ALERT_RESOLVE" ? (
+                          <p>{lifecycleEventNote(event)}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+          <label className="desk-analysis-review-conclusion">
+            <span>复核结论（完成归档时写入）</span>
+            <Select
+              value={fieldAlarmReviewConclusion}
+              onChange={(value: ReviewConclusion) => setFieldAlarmReviewConclusion(value)}
+              options={REVIEW_CONCLUSION_OPTIONS}
+            />
+          </label>
+          <label className="desk-analysis-review-note">
+            <span>复核记录</span>
+            <Input.TextArea
+              rows={3}
+              value={fieldAlarmReviewNote}
+              maxLength={500}
+              showCount
+              onChange={(event) => setFieldAlarmReviewNote(event.target.value)}
+            />
+          </label>
           <div className="desk-analysis-review-hint">
-            提交后会写入告警生命周期事件和操作日志；“解除警报”会关闭 RK3568 声光报警并清除当前红色预警态。
+            “进入复核”只静音并保留待办；“完成复核并归档”会解除警报并保存结论。规则等级始终由真实相对偏移计算，人工复核不会覆盖或降低测值等级。解除后需回到倾角基线 {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}° 内并保持 {String(fieldAlarmReviewData.thresholds.recoveryPoints)} 个上报点，规则才会自动重新布防。
           </div>
           {fieldAlarmReviewError ? <div className="desk-analysis-review-error">{fieldAlarmReviewError}</div> : null}
+        </div>
+      </Modal>
+
+      <Modal
+        centered
+        width={640}
+        className="desk-analysis-competition-modal"
+        open={competitionSetupOpen}
+        title="倾角告警基线"
+        onCancel={() => {
+          if (!competitionCaptureBusy) setCompetitionSetupOpen(false);
+        }}
+        footer={[
+          <Button key="cancel" disabled={competitionCaptureBusy} onClick={() => setCompetitionSetupOpen(false)}>
+            取消
+          </Button>,
+          <Button
+            key="capture"
+            type="primary"
+            danger
+            loading={competitionCaptureBusy}
+            onClick={() => { void captureCompetitionBaseline(); }}
+          >
+            采集当前姿态并启用
+          </Button>,
+        ]}
+      >
+        <div className="desk-analysis-competition-body">
+          <div className="desk-analysis-competition-status">
+            <Tag color={fieldAlarmStatus?.competitionProfile?.enabled ? "green" : "default"}>
+              {fieldAlarmStatus?.competitionProfile?.enabled ? "已启用" : "未采集"}
+            </Tag>
+            <span>覆盖节点 {fieldAlarmStatus?.competitionProfile?.devices.length ?? 0}</span>
+            <span>最近采集 {fieldAlarmStatus?.competitionProfile?.capturedAt ? formatBeijingDateTime(fieldAlarmStatus.competitionProfile.capturedAt) : "--"}</span>
+          </div>
+          <div className="desk-analysis-competition-thresholds">
+            <label>
+              <span>高风险阈值</span>
+              <InputNumber
+                min={0.5}
+                max={45}
+                step={0.5}
+                precision={1}
+                value={competitionThresholds.highDeg}
+                addonAfter="°"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, highDeg: Number(value ?? 3) }))}
+              />
+            </label>
+            <label>
+              <span>严重风险阈值</span>
+              <InputNumber
+                min={1}
+                max={90}
+                step={0.5}
+                precision={1}
+                value={competitionThresholds.criticalDeg}
+                addonAfter="°"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, criticalDeg: Number(value ?? 7) }))}
+              />
+            </label>
+            <label>
+              <span>重新布防范围</span>
+              <InputNumber
+                min={0}
+                max={20}
+                step={0.5}
+                precision={1}
+                value={competitionThresholds.recoveryDeg}
+                addonAfter="°"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, recoveryDeg: Number(value ?? 1.5) }))}
+              />
+            </label>
+            <label>
+              <span>连续确认点数</span>
+              <InputNumber
+                min={1}
+                max={10}
+                step={1}
+                precision={0}
+                value={competitionThresholds.triggerPoints}
+                addonAfter="点"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, triggerPoints: Number(value ?? 2) }))}
+              />
+            </label>
+          </div>
+          {fieldAlarmStatus?.competitionProfile?.devices.length ? (
+            <div className="desk-analysis-competition-baselines">
+              {fieldAlarmStatus.competitionProfile.devices.map((device) => (
+                <div key={device.deviceId}>
+                  <strong>{device.deviceName}</strong>
+                  <span>X {device.baseline.x.toFixed(2)}°</span>
+                  <span>Y {device.baseline.y.toFixed(2)}°</span>
+                  <span>Z {device.baseline.z.toFixed(2)}°</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {competitionCaptureError ? <div className="desk-analysis-competition-error">{competitionCaptureError}</div> : null}
         </div>
       </Modal>
 
@@ -2579,6 +3156,7 @@ export function AnalysisPage() {
                       <RealMapView
                         layer={mapType}
                         stations={visibleStations}
+                        points={mapPoints}
                         selectedStationIds={selectedStationIds}
                         onSelectStationIds={setSelectedStationIds}
                         resetKey={mapViewSeed}
@@ -2839,8 +3417,8 @@ export function AnalysisPage() {
 
           <div className="desk-analysis-rightcol">
             <div className="desk-analysis-right-top">
-              <BaseCard title={`雨量趋势（${realtimeTrendWindow.label}，mm）`}>
-                <ReactECharts option={rainfallOption} style={{ height: "100%" }} />
+              <BaseCard title="各分节点数据新鲜度（距最后上报，秒）">
+                <ReactECharts option={dataFreshnessOption} style={{ height: "100%" }} />
               </BaseCard>
             </div>
 
@@ -2880,20 +3458,35 @@ export function AnalysisPage() {
                       </span>
                     </div>
                     <div className="desk-sensor-item">
-                      <span className="desk-sensor-label">{batteryReportingCount > 0 ? "低电量" : "电量未上报"}</span>
-                      <span className="desk-sensor-value" style={{ color: "#f59e0b" }}>
-                        {batteryReportingCount > 0 ? String(lowBatteryCount) : "—"}
+                      <span className="desk-sensor-label">倾角有效</span>
+                      <span className="desk-sensor-value" style={{ color: "#22d3ee" }}>
+                        {`${freshTiltCount}/${visibleDevices.length}`}
                       </span>
                     </div>
                     <div className="desk-sensor-item">
-                      <span className="desk-sensor-label">预警设备</span>
+                      <span className="desk-sensor-label">活动倾角告警</span>
                       <span className="desk-sensor-value" style={{ color: "#ef4444" }}>
-                        {String(warningFlagCount)}
+                        {String(activeTiltAlertCount)}
+                      </span>
+                    </div>
+                    <div className="desk-sensor-item">
+                      <span className="desk-sensor-label">待人工复核</span>
+                      <span className="desk-sensor-value" style={{ color: "#fbbf24" }}>
+                        {String(pendingTiltReviewCount)}
                       </span>
                     </div>
                   </div>
                   <div className="desk-sensor-col">
-                    <ReactECharts option={sensorTypeOption} style={{ height: "100%" }} />
+                    <div className="desk-sensor-chart">
+                      <div className="desk-sensor-chart-legend" aria-label="传感器运行概览图例">
+                        <span><i className="is-total" />总数</span>
+                        <span><i className="is-abnormal" />异常 / 告警</span>
+                        <span><i className="is-review" />待复核</span>
+                      </div>
+                      <div className="desk-sensor-chart-canvas">
+                        <ReactECharts option={sensorTypeOption} style={{ height: "100%" }} />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </BaseCard>
@@ -2904,4 +3497,3 @@ export function AnalysisPage() {
     </div>
   );
 }
-

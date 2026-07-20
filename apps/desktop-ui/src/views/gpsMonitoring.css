@@ -40,24 +40,28 @@
   flex-wrap: wrap;
 }
 
-.desk-gps-navbtn {
+.desk-gps-navbtn,
+.desk-gps-toolbtn.ant-btn {
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(51, 65, 85, 0.18);
   color: rgba(203, 213, 225, 0.92);
-  padding: 8px 12px;
-  border-radius: 10px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
   font-size: 12px;
   cursor: pointer;
   transition: all 160ms ease;
 }
 
-.desk-gps-navbtn:hover {
+.desk-gps-navbtn:hover,
+.desk-gps-toolbtn.ant-btn:hover {
   color: rgba(255, 255, 255, 0.95);
   border-color: rgba(34, 211, 238, 0.35);
   background: rgba(51, 65, 85, 0.35);
 }
 
-.desk-gps-navbtn.active {
+.desk-gps-navbtn.active,
+.desk-gps-toolbtn.ant-btn.active {
   color: rgba(165, 243, 252, 0.95);
   border-color: rgba(34, 211, 238, 0.35);
   background: rgba(51, 65, 85, 0.45);
@@ -166,12 +170,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.desk-gps-baseline-btn {
-  border: 1px solid rgba(34, 211, 238, 0.45) !important;
-  background: rgba(34, 211, 238, 0.14) !important;
-  color: rgba(165, 243, 252, 0.95) !important;
 }
 
 .desk-gps-stats {
@@ -311,6 +309,73 @@
   border-radius: 12px;
   padding: 8px;
   min-height: 240px;
+  overflow: hidden;
+}
+
+.desk-gps-location-map {
+  position: relative;
+  width: 100%;
+  height: 240px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.desk-gps-location-map .leaflet-container {
+  background: rgba(2, 6, 23, 0.45);
+}
+
+.desk-gps-location-map .leaflet-control-attribution {
+  margin: 0 5px 5px 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(2, 6, 23, 0.68);
+  color: rgba(226, 232, 240, 0.8);
+  font-size: 10px;
+}
+
+.desk-gps-location-map .leaflet-control-attribution a {
+  color: rgba(34, 211, 238, 0.92);
+}
+
+.desk-gps-location-map .leaflet-tooltip {
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.9);
+  color: rgba(226, 232, 240, 0.96);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+}
+
+.desk-gps-location-legend {
+  position: absolute;
+  z-index: 500;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.78);
+  color: rgba(226, 232, 240, 0.92);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.desk-gps-location-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.desk-gps-location-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.desk-gps-location-legend i.is-reference {
+  background: #22c55e;
 }
 
 .desk-gps-ceemd-metrics {
