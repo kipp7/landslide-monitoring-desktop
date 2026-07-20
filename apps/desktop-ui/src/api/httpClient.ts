@@ -1092,6 +1092,31 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           }))
           .filter((point) => Number.isFinite(point.value));
       },
+      async getSeriesBatch(input) {
+        const interval = input.interval ?? "1h";
+        const sensorKeys = Array.from(new Set(input.sensorKeys.map((key) => key.trim()).filter(Boolean)));
+        if (!sensorKeys.length) return {};
+        const res = await transport.requestV1<{
+          series: Array<{
+            sensorKey: string;
+            points: Array<{ ts: string; value: unknown }>;
+          }>;
+        }>(
+          `/api/v1/data/series/${encodeURIComponent(input.deviceId)}?startTime=${encodeURIComponent(input.startTime)}&endTime=${encodeURIComponent(input.endTime)}&sensorKeys=${encodeURIComponent(sensorKeys.join(","))}&interval=${encodeURIComponent(interval)}`
+        );
+        return Object.fromEntries(
+          sensorKeys.map((sensorKey) => {
+            const series = res.series.find((item) => item.sensorKey === sensorKey);
+            const points = (series?.points ?? [])
+              .map((point) => ({
+                ts: point.ts,
+                value: typeof point.value === "number" ? point.value : Number(point.value),
+              }))
+              .filter((point) => Number.isFinite(point.value));
+            return [sensorKey, points];
+          })
+        );
+      },
     },
     aiPredictions: {
       async list(input) {

@@ -784,6 +784,13 @@ export type ApiClient = {
       endTime: string;
       interval?: "raw" | "1m" | "5m" | "1h" | "1d";
     }) => Promise<TelemetrySeriesPoint[]>;
+    getSeriesBatch: (input: {
+      deviceId: string;
+      sensorKeys: string[];
+      startTime: string;
+      endTime: string;
+      interval?: "raw" | "1m" | "5m" | "1h" | "1d";
+    }) => Promise<Record<string, TelemetrySeriesPoint[]>>;
   };
   aiPredictions: {
     list: (input?: {
