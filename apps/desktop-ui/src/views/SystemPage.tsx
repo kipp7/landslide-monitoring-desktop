@@ -271,13 +271,22 @@ function scoreToThreeColor(score: number, colorMode: SurfacePresentation["colorM
 }
 
 function HermesVolatilityThreeSurface({
-  surface,
+  surface: incomingSurface,
   presentation
 }: {
   surface: HermesVolatilitySurface;
   presentation: SurfacePresentation;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const pendingSurfaceRef = useRef(incomingSurface);
+  const interactionActiveRef = useRef(false);
+  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: 0.9 });
+  const [surface, setSurface] = useState(incomingSurface);
+
+  useEffect(() => {
+    pendingSurfaceRef.current = incomingSurface;
+    if (!interactionActiveRef.current) setSurface(incomingSurface);
+  }, [incomingSurface]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -286,9 +295,11 @@ function HermesVolatilityThreeSurface({
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x050811, 0.042);
 
-    const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
-    camera.position.set(5.6, 4.35, 7.1);
-    camera.lookAt(0, 1.35, 0);
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+    camera.position.set(8.8, 6.45, 10.7);
+    camera.lookAt(0, 1.25, 0);
+    camera.zoom = viewStateRef.current.zoom;
+    camera.updateProjectionMatrix();
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -312,8 +323,8 @@ function HermesVolatilityThreeSurface({
     scene.add(amberLight);
 
     const world = new THREE.Group();
-    world.scale.set(0.82, 0.86, 0.82);
-    world.position.set(0.2, 0.04, 0);
+    world.scale.set(0.78, 0.82, 0.78);
+    world.position.set(0.12, -0.04, 0);
     scene.add(world);
 
     const horizons = surface.horizonsMinutes;
@@ -327,7 +338,7 @@ function HermesVolatilityThreeSurface({
     const zStep = isTiltRiskSurface
       ? (dimensions.length > 3 ? 5.8 : Math.max(2.36, (dimensions.length - 1) * 1.18)) / Math.max(1, dimensions.length - 1)
       : 0.52;
-    const yScale = isTiltRiskSurface ? 0.024 : 0.031;
+    const yScale = isTiltRiskSurface ? 0.021 : 0.031;
     const xOffset = ((horizons.length - 1) * xStep) / 2;
     const zOffset = ((dimensions.length - 1) * zStep) / 2;
     const sceneObjects: THREE.Object3D[] = [];
@@ -825,15 +836,34 @@ function HermesVolatilityThreeSurface({
     let isDragging = false;
     let lastPointerX = 0;
     let lastPointerY = 0;
-    let targetYaw = -0.18;
+    let targetYaw = viewStateRef.current.yaw;
     let currentYaw = targetYaw;
-    let targetPitch = 0.08;
+    let targetPitch = viewStateRef.current.pitch;
     let currentPitch = targetPitch;
+    let wheelReleaseTimer = 0;
     renderer.domElement.style.cursor = "grab";
     renderer.domElement.style.touchAction = "none";
 
+    const persistViewState = () => {
+      viewStateRef.current = {
+        yaw: targetYaw,
+        pitch: targetPitch,
+        zoom: camera.zoom
+      };
+    };
+    const applyPendingSurface = () => {
+      setSurface((current) => pendingSurfaceRef.current === current ? current : pendingSurfaceRef.current);
+    };
+    const endInteraction = () => {
+      interactionActiveRef.current = false;
+      persistViewState();
+      applyPendingSurface();
+    };
+
     const handlePointerDown = (event: PointerEvent) => {
       isDragging = true;
+      interactionActiveRef.current = true;
+      window.clearTimeout(wheelReleaseTimer);
       lastPointerX = event.clientX;
       lastPointerY = event.clientY;
       renderer.domElement.style.cursor = "grabbing";
@@ -845,6 +875,9 @@ function HermesVolatilityThreeSurface({
       const deltaY = event.clientY - lastPointerY;
       targetYaw += deltaX * 0.008;
       targetPitch = clamp(targetPitch + deltaY * 0.006, -0.42, 0.36);
+      currentYaw = targetYaw;
+      currentPitch = targetPitch;
+      world.rotation.set(currentPitch, currentYaw, 0);
       lastPointerX = event.clientX;
       lastPointerY = event.clientY;
     };
@@ -854,11 +887,16 @@ function HermesVolatilityThreeSurface({
       if (renderer.domElement.hasPointerCapture(event.pointerId)) {
         renderer.domElement.releasePointerCapture(event.pointerId);
       }
+      endInteraction();
     };
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      camera.zoom = clamp(camera.zoom + (event.deltaY < 0 ? 0.08 : -0.08), 0.78, 1.36);
+      interactionActiveRef.current = true;
+      window.clearTimeout(wheelReleaseTimer);
+      camera.zoom = clamp(camera.zoom + (event.deltaY < 0 ? 0.08 : -0.08), 0.68, 1.45);
       camera.updateProjectionMatrix();
+      persistViewState();
+      wheelReleaseTimer = window.setTimeout(endInteraction, 450);
     };
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
     renderer.domElement.addEventListener("pointermove", handlePointerMove);
@@ -866,13 +904,10 @@ function HermesVolatilityThreeSurface({
     renderer.domElement.addEventListener("pointercancel", handlePointerUp);
     renderer.domElement.addEventListener("wheel", handleWheel, { passive: false });
 
-    let frame = 0;
     let disposed = false;
     let animationFrameId = 0;
     const animate = () => {
       if (disposed) return;
-      frame += 1;
-      if (!isDragging) targetYaw += 0.001;
       currentYaw += (targetYaw - currentYaw) * 0.08;
       currentPitch += (targetPitch - currentPitch) * 0.08;
       world.rotation.set(currentPitch, currentYaw, 0);
@@ -884,6 +919,8 @@ function HermesVolatilityThreeSurface({
     return () => {
       disposed = true;
       window.cancelAnimationFrame(animationFrameId);
+      window.clearTimeout(wheelReleaseTimer);
+      persistViewState();
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
@@ -958,6 +995,12 @@ type RealtimeTiltSurfaceData = {
   windowStartedAt: string | null;
 };
 
+function tiltDeviationToSurfaceScore(deviationDeg: number, criticalDeg: number): number {
+  const thresholdRatio = (Math.abs(deviationDeg) / criticalDeg) * 100;
+  if (thresholdRatio <= 140) return thresholdRatio;
+  return Math.min(340, 140 + Math.log2(thresholdRatio / 140) * 38);
+}
+
 function buildRealtimeTiltSurface(
   status: FieldAlarmStatus | null,
   historyRows: RealtimeTiltHistoryRow[]
@@ -987,7 +1030,7 @@ function buildRealtimeTiltSurface(
     TILT_AXES.map((axis, axisIndex) => ({
       horizonMinutes: axisIndex,
       dimensionKey: row.deviceId,
-      volatilityScore: Math.min(140, (Math.abs(row.delta[axis]) / criticalDeg) * 100),
+      volatilityScore: tiltDeviationToSurfaceScore(row.delta[axis], criticalDeg),
       confidence: null,
       diagnosisType: null,
       driver: `${axis.toUpperCase()} 轴相对倾角基线偏移`
@@ -1071,7 +1114,7 @@ function buildRealtimeTiltSurface(
       const baseline = baselineByDeviceId.get(channel.row.deviceId)?.[channel.axis] ?? 0;
       return alignedFrames.map((frame, index) => {
         const point = frame.samples.get(channel.key)!;
-        const score = Math.min(140, (Math.abs(point.value - baseline) / criticalDeg) * 100);
+        const score = tiltDeviationToSurfaceScore(point.value - baseline, criticalDeg);
         if (score > peakScore) {
           peakScore = score;
           peakDimensionKey = channel.key;
@@ -1132,7 +1175,7 @@ function buildRealtimeTiltSurface(
       horizonsMinutes: [0, 1, 2],
       dimensions: rows.map((row) => ({ key: row.deviceId, label: row.label, unit: "°" })),
       points: snapshotPoints,
-      peakScore: Math.min(140, (peak.maxDeviationDeg / criticalDeg) * 100),
+      peakScore: tiltDeviationToSurfaceScore(peak.maxDeviationDeg, criticalDeg),
       peakDimensionKey: peak.deviceId,
       peakHorizonMinutes: TILT_AXES.indexOf(peak.maxAxis),
       modelConfidence: null,
