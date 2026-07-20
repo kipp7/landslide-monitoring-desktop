@@ -734,17 +734,6 @@
   overflow-wrap: anywhere;
 }
 
-.desk-dm-actuator-detail {
-  margin-top: 8px;
-  padding: 9px 10px;
-  border-left: 2px solid rgba(34, 211, 238, 0.55);
-  background: rgba(2, 6, 23, 0.22);
-  color: rgba(203, 213, 225, 0.9);
-  font-size: 12px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
 .desk-dm-live-bottom {
   display: grid;
   grid-template-columns: minmax(640px, 1.8fr) minmax(380px, 1fr);

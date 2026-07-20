@@ -262,6 +262,23 @@ function makeMockFieldAlarmStatus(
       lastAction: action ?? null,
       lastActionAt: action ? nowIso() : null,
       detail: "Mock 模式：模拟 RK3568 /dev/ttyS7 声光报警执行器。",
+      tongxiao: {
+        deviceId: "mock-tongxiao-rk2206",
+        mqttConnected: true,
+        boardOnline: true,
+        inSync: true,
+        reported: {
+          state: active ? "active" : silenced ? "silenced" : "idle",
+          firmware_version: "mock",
+        },
+        presence: {
+          status: "online",
+          meta: { fw: "mock", role: "tongxiao_alarm_terminal" },
+        },
+        presenceAgeSeconds: 1,
+        presenceStaleSeconds: 90,
+        voiceEnabled: false,
+      },
     },
     competitionProfile: competitionProfile ?? null,
   };

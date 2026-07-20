@@ -26,6 +26,7 @@ import { useAuthStore } from "../stores/authStore";
 import { useFieldAlarmStore } from "../stores/fieldAlarmStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { formatBeijingDate, formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
+import { fieldAlarmTerminalConnectionLabel } from "../utils/fieldAlarmTerminal";
 import { formatInstallLabelDisplay, formatWarningFlagDisplay } from "../utils/fieldIdentityDisplay";
 
 import "./analysis.css";
@@ -2770,7 +2771,11 @@ export function AnalysisPage() {
         <div className={`desk-analysis-field-alarm${fieldAlarmStatus.active ? " is-active" : " is-silenced"}`}>
           <div>
             <div className="desk-analysis-field-alarm-k">
-              {fieldAlarmStatus.active ? "现场声光报警已触发" : "现场报警已静音，等待人工复核"}
+              {fieldAlarmStatus.active
+                ? fieldAlarmReviewData.boardOnline && fieldAlarmReviewData.actuatorState === "active"
+                  ? "现场声光报警已确认"
+                  : "监测告警已触发，现场终端未确认"
+                : "告警已进入复核，等待人工确认"}
             </div>
             <div className="desk-analysis-field-alarm-v">
               {fieldAlarmStatus.latestAlert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}
@@ -2779,7 +2784,7 @@ export function AnalysisPage() {
           <div className="desk-analysis-field-alarm-meta">
             <span>活跃 {fieldAlarmStatus.activeCount}</span>
             <span>复核 {fieldAlarmStatus.ackedCount}</span>
-            <span>{fieldAlarmStatus.actuator.available ? "RK2206 已连接" : "告警终端未连接"}</span>
+            <span>{fieldAlarmTerminalConnectionLabel(fieldAlarmStatus.actuator)}</span>
             <Button
               size="small"
               danger={fieldAlarmStatus.active}
@@ -2889,7 +2894,7 @@ export function AnalysisPage() {
             </div>
             <div>
               <span>状态</span>
-              <strong>{fieldAlarmStatus?.active ? "现场声光报警中" : fieldAlarmStatus?.silenced ? "已静音待复核" : "正常"}</strong>
+              <strong>{fieldAlarmStatus?.active ? "监测告警处理中" : fieldAlarmStatus?.silenced ? "已进入复核" : "正常"}</strong>
             </div>
             <div>
               <span>首次触发</span>

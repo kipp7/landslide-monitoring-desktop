@@ -9,6 +9,7 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { HoverSidebar } from "../components/HoverSidebar";
 import { useAuthStore } from "../stores/authStore";
 import { useFieldAlarmStore } from "../stores/fieldAlarmStore";
+import { fieldAlarmTerminalConnectionLabel, getFieldAlarmTerminal } from "../utils/fieldAlarmTerminal";
 import "./shell.css";
 
 function evidenceRecord(value: unknown): Record<string, unknown> {
@@ -107,6 +108,7 @@ export function AppShell() {
       });
       if (!result.accepted) throw new Error(result.actuator.lastError ?? "现场告警终端未接受命令");
       applyAlarmActionResult(result, selectedAlert.alertId);
+      const terminal = getFieldAlarmTerminal(result.actuator);
       if (action === "resolve") {
         const remainingAlert = alarmStatus?.alerts.find((alert) => alert.alertId !== selectedAlert.alertId) ?? null;
         setSelectedAlertId(remainingAlert?.alertId ?? null);
@@ -114,13 +116,18 @@ export function AppShell() {
       }
       void refreshAlarmStatus();
       if (action === "ack") {
-        message.success("已静音，告警保留待复核");
+        if (terminal?.boardOnline && terminal.inSync) {
+          message.success("RK2206 已确认静音，告警保留待复核");
+        } else {
+          message.info("复核状态已记录，静音指令等待 RK2206 状态回报");
+        }
       } else {
         const thresholds = alarmStatus?.competitionProfile?.thresholds;
-        message.success(
-          `告警已解除。回到倾角基线 ${String(thresholds?.recoveryDeg ?? 1.5)}° 内连续 ${String(thresholds?.recoveryPoints ?? 2)} 个点后自动重新布防。`,
-          6
-        );
+        message.open({
+          type: terminal?.boardOnline && terminal.inSync ? "success" : "info",
+          content: `告警已解除${terminal?.boardOnline && terminal.inSync ? "，RK2206 已确认关闭" : "，关闭状态等待 RK2206 同步"}。回到倾角基线 ${String(thresholds?.recoveryDeg ?? 1.5)}° 内连续 ${String(thresholds?.recoveryPoints ?? 2)} 个点后自动重新布防。`,
+          duration: 6,
+        });
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : "告警操作失败");
@@ -211,7 +218,7 @@ export function AppShell() {
                 <div><span>触发节点</span><strong>{shortDeviceId(selectedAlert.deviceId)}</strong></div>
                 <div><span>最大偏移</span><strong>{maxDeviationDeg === null ? "--" : `${maxDeviationDeg.toFixed(2)}°`}</strong></div>
                 <div><span>主变化轴</span><strong>{maxAxis ?? "--"}</strong></div>
-                <div><span>现场终端</span><strong>{alarmStatus?.actuator.available ? "Tongxiao RK2206 已连接" : "连接待确认"}</strong></div>
+                <div><span>现场终端</span><strong>{fieldAlarmTerminalConnectionLabel(alarmStatus?.actuator)}</strong></div>
               </div>
               <div className="desk-global-alarm-actions">
                 <Button

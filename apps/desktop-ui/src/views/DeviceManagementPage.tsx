@@ -23,6 +23,13 @@ import { BaseCard } from "../components/BaseCard";
 import { StatusTag } from "../components/StatusTag";
 import { formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
 import {
+  fieldAlarmTerminalConnectionLabel,
+  fieldAlarmTerminalFirmware,
+  formatFieldAlarmPresenceAge,
+  getFieldAlarmTerminal,
+  isFieldAlarmTerminalOnline,
+} from "../utils/fieldAlarmTerminal";
+import {
   formatDeviceRoleDisplay,
   formatInstallLabelDisplay,
   formatLifecycleStatusDisplay,
@@ -191,6 +198,10 @@ export function DeviceManagementPage() {
   const [lastUpdateTime, setLastUpdateTime] = useState("");
   const [nowTime, setNowTime] = useState(formatBeijingTime(new Date()));
   const selectedDeviceIdRef = useRef("");
+  const fieldAlarmActuator = fieldAlarmStatus?.actuator ?? null;
+  const fieldAlarmTerminal = getFieldAlarmTerminal(fieldAlarmActuator);
+  const fieldAlarmBridgeAvailable = fieldAlarmActuator?.available === true && fieldAlarmActuator.dryRun !== true;
+  const fieldAlarmBoardOnline = isFieldAlarmTerminalOnline(fieldAlarmActuator);
 
   useEffect(() => {
     selectedDeviceIdRef.current = selectedDeviceId;
@@ -367,7 +378,11 @@ export function DeviceManagementPage() {
   };
 
   const issueAlarmAction = async (action: Extract<FieldAlarmAction, "alarm_on" | "alarm_off">) => {
-    if (alarmBusy || !fieldAlarmStatus?.actuator.available) return;
+    if (alarmBusy || !fieldAlarmBridgeAvailable) return;
+    if (action === "alarm_on" && !fieldAlarmBoardOnline) {
+      message.warning("RK2206 当前离线，无法确认现场启动，已阻止本次操作");
+      return;
+    }
     setAlarmBusy(true);
     try {
       const result = await api.fieldAlarm.sendAction({
@@ -375,14 +390,28 @@ export function DeviceManagementPage() {
         reason: action === "alarm_on" ? "设备管理中心人工启动现场声光告警" : "设备管理中心人工停止现场声光告警",
       });
       const refreshed = await api.fieldAlarm.getStatus().catch(() => null);
-      setFieldAlarmStatus(refreshed ?? {
-        ...fieldAlarmStatus,
-        active: action === "alarm_on" && result.accepted,
-        silenced: action === "alarm_off" && result.accepted,
-        actuator: result.actuator,
-      });
-      if (result.accepted) message.success(action === "alarm_on" ? "现场声光告警已启动" : "现场声光告警已停止");
-      else message.error(result.actuator.lastError ?? "现场执行器未确认命令");
+      if (refreshed) {
+        setFieldAlarmStatus(refreshed);
+      } else {
+        setFieldAlarmStatus((previous) => previous ? {
+          ...previous,
+          active: action === "alarm_on" && result.accepted,
+          silenced: action === "alarm_off" && result.accepted,
+          actuator: result.actuator,
+        } : previous);
+      }
+      if (!result.accepted) {
+        message.error(result.actuator.lastError ?? "现场执行器未确认命令");
+      } else {
+        const terminal = getFieldAlarmTerminal(result.actuator);
+        if (terminal?.boardOnline && terminal.inSync) {
+          message.success(action === "alarm_on" ? "RK2206 已确认启动现场告警" : "RK2206 已确认停止现场告警");
+        } else if (action === "alarm_on") {
+          message.info("启动指令已送达告警桥，等待 RK2206 状态回报");
+        } else {
+          message.info(terminal?.boardOnline ? "停止指令等待 RK2206 状态回报" : "停止状态已保留，RK2206 重连后将保持关闭");
+        }
+      }
     } catch (error) {
       message.error((error as Error).message);
     } finally {
@@ -446,7 +475,7 @@ export function DeviceManagementPage() {
             <div><span>在线</span><strong className="is-online">{counts.online}</strong></div>
             <div><span>待确认</span><strong className="is-warning">{counts.warning}</strong></div>
             <div><span>离线</span><strong>{counts.offline}</strong></div>
-            <div><span>现场执行器</span><strong>{fieldAlarmStatus?.actuator.dryRun ? "演示配置" : fieldAlarmStatus?.actuator.available ? "可用" : "不可用"}</strong></div>
+            <div><span>现场终端</span><strong>{fieldAlarmTerminalConnectionLabel(fieldAlarmActuator)}</strong></div>
           </div>
 
           <div className="desk-dm-live-top">
@@ -501,14 +530,17 @@ export function DeviceManagementPage() {
               ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择设备" />}
             </BaseCard>
 
-            <BaseCard title="现场声光告警" extra={<Tag color={fieldAlarmStatus?.active ? "error" : "default"}>{fieldAlarmStatus?.active ? "告警中" : "待命"}</Tag>}>
+            <BaseCard title="现场声光告警" extra={<Tag color={fieldAlarmStatus?.active ? "error" : "default"}>{fieldAlarmStatus?.active ? "平台告警中" : "待命"}</Tag>}>
               <div className="desk-dm-alarm-status">
-                <div><span>执行器</span><strong>{fieldAlarmStatus?.actuator.dryRun ? "演示配置" : fieldAlarmStatus?.actuator.available ? "已连接" : "不可用"}</strong></div>
+                <div><span>告警桥</span><strong>{fieldAlarmBridgeAvailable ? "已连接" : "不可用"}</strong></div>
+                <div><span>RK2206</span><strong>{fieldAlarmBoardOnline ? "在线" : "离线"}</strong></div>
+                <div><span>状态同步</span><strong>{fieldAlarmBoardOnline && fieldAlarmTerminal?.inSync ? "已确认" : "等待回报"}</strong></div>
+                <div><span>最近心跳</span><strong>{formatFieldAlarmPresenceAge(fieldAlarmTerminal?.presenceAgeSeconds)}</strong></div>
+                <div><span>固件版本</span><strong>{fieldAlarmTerminalFirmware(fieldAlarmActuator) ?? "未上报"}</strong></div>
                 <div><span>执行状态</span><strong>{formatActuatorState(fieldAlarmStatus?.actuator.state)}</strong></div>
                 <div><span>最近动作</span><strong>{formatActuatorAction(fieldAlarmStatus?.actuator.lastAction)}</strong></div>
                 <div><span>动作时间</span><strong>{formatTimestamp(fieldAlarmStatus?.actuator.lastActionAt)}</strong></div>
               </div>
-              <div className="desk-dm-actuator-detail">{fieldAlarmStatus?.actuator.detail ?? "服务器未返回现场执行器信息"}</div>
               {fieldAlarmStatus?.actuator.lastError ? <Alert type="error" showIcon message={fieldAlarmStatus.actuator.lastError} /> : null}
               <Space style={{ marginTop: 12 }}>
                 <Button
@@ -516,17 +548,17 @@ export function DeviceManagementPage() {
                   type="primary"
                   icon={<AlertOutlined />}
                   loading={alarmBusy}
-                  disabled={!fieldAlarmStatus?.actuator.available || fieldAlarmStatus?.actuator.dryRun || fieldAlarmStatus?.active}
+                  disabled={!fieldAlarmBridgeAvailable || !fieldAlarmBoardOnline || fieldAlarmStatus?.active === true}
                   onClick={() => void issueAlarmAction("alarm_on")}
                 >
                   启动告警
                 </Button>
                 <Button
                   loading={alarmBusy}
-                  disabled={!fieldAlarmStatus?.actuator.available || fieldAlarmStatus?.actuator.dryRun || !fieldAlarmStatus?.active}
+                  disabled={!fieldAlarmBridgeAvailable}
                   onClick={() => void issueAlarmAction("alarm_off")}
                 >
-                  停止告警
+                  停止并保持关闭
                 </Button>
               </Space>
             </BaseCard>

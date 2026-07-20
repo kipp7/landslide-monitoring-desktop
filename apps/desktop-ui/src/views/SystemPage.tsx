@@ -1,53 +1,28 @@
-import { App as AntApp, Button, Card, Col, Input, Modal, Row, Select, Skeleton, Space, Switch, Table, Tag, Typography } from "antd";
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
+import { App as AntApp, Button, Col, Row, Skeleton, Space, Switch, Tag, Typography } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type {
-  CommandSuccessNotificationPolicyConfig,
   Device,
   DeviceStateSnapshot,
   FieldEdgeStatus,
   FieldAlarmStatus,
-  OperationLogRow,
   SystemStatus
 } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { formatInstallLabelDisplay } from "../utils/fieldIdentityDisplay";
 import { formatBeijingDateTime } from "../utils/beijingTime";
+import {
+  fieldAlarmTerminalFirmware,
+  formatFieldAlarmPresenceAge,
+  getFieldAlarmTerminal,
+  isFieldAlarmTerminalOnline
+} from "../utils/fieldAlarmTerminal";
 
 import "./systemPage.css";
-
-function policyLabel(value: "silent" | "always_notify"): string {
-  return value === "always_notify" ? "成功后通知" : "静默记录";
-}
-
-function operationStatusLabel(value: string | null | undefined): string {
-  if (value === "success") return "成功";
-  if (value === "failed") return "失败";
-  if (value === "pending") return "处理中";
-  return value || "-";
-}
-
-function commandTypeLabel(value: string): string {
-  const labels: Record<string, string> = {
-    set_config: "下发配置",
-    reboot: "重启设备",
-    restart_device: "重启设备",
-    deactivate_device: "停用设备",
-    set_sampling_interval: "设置采样间隔",
-    manual_collect: "手动采集",
-    motor_start: "启动电机",
-    motor_stop: "停止电机",
-    buzzer_on: "现场告警终端启动",
-    buzzer_off: "现场告警终端停止",
-    "huawei:reboot": "华为 IoT 重启"
-  };
-  const label = labels[value];
-  return label ? `${label}（${value}）` : value;
-}
 
 function healthLabel(status: SystemStatus["items"][number]["status"]): string {
   if (status === "healthy") return "健康";
@@ -1334,239 +1309,15 @@ function buildLiveFieldEdgeFallback(
   };
 }
 
-type PolicyRow = { commandType: string; policy: "silent" | "always_notify" };
-type PolicyTemplate = { commandType: string; policy: "silent" | "always_notify"; label: string };
-type PolicySnapshot = CommandSuccessNotificationPolicyConfig;
-type PolicyChangeDetails = {
-  systemDefaultChanged: boolean;
-  added: Array<{ commandType: string; policy: "silent" | "always_notify" }>;
-  removed: Array<{ commandType: string; policy: "silent" | "always_notify" }>;
-  changed: Array<{ commandType: string; before: "silent" | "always_notify"; after: "silent" | "always_notify" }>;
-};
-
-const RECOMMENDED_POLICY_DEFAULTS: CommandSuccessNotificationPolicyConfig = {
-  systemDefault: "silent",
-  commandTypeDefaults: {
-    set_config: "always_notify",
-    reboot: "always_notify",
-    restart_device: "always_notify",
-    deactivate_device: "always_notify",
-    set_sampling_interval: "always_notify",
-    manual_collect: "always_notify",
-    "huawei:reboot": "always_notify"
-  }
-};
-
-const LEGACY_NODE_ALARM_COMMAND_TYPES = new Set(["buzzer_on", "buzzer_off"]);
-
-function stripLegacyNodeAlarmPolicies(
-  policy: CommandSuccessNotificationPolicyConfig
-): CommandSuccessNotificationPolicyConfig {
-  const commandTypeDefaults = Object.fromEntries(
-    Object.entries(policy.commandTypeDefaults).filter(([commandType]) => !LEGACY_NODE_ALARM_COMMAND_TYPES.has(commandType))
-  ) as Record<string, "silent" | "always_notify">;
-  return { ...policy, commandTypeDefaults };
-}
-
-const POLICY_TEMPLATES: PolicyTemplate[] = [
-  { commandType: "set_config", policy: "always_notify", label: commandTypeLabel("set_config") },
-  { commandType: "reboot", policy: "always_notify", label: commandTypeLabel("reboot") },
-  { commandType: "restart_device", policy: "always_notify", label: commandTypeLabel("restart_device") },
-  { commandType: "deactivate_device", policy: "always_notify", label: commandTypeLabel("deactivate_device") },
-  { commandType: "set_sampling_interval", policy: "always_notify", label: commandTypeLabel("set_sampling_interval") },
-  { commandType: "manual_collect", policy: "always_notify", label: commandTypeLabel("manual_collect") },
-  { commandType: "motor_start", policy: "silent", label: commandTypeLabel("motor_start") },
-  { commandType: "motor_stop", policy: "silent", label: commandTypeLabel("motor_stop") },
-  { commandType: "huawei:reboot", policy: "always_notify", label: commandTypeLabel("huawei:reboot") }
-];
-
-function readPolicySnapshot(value: unknown, key: "previousPolicy" | "nextPolicy"): PolicySnapshot | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  const candidate = record[key];
-  if (!candidate || typeof candidate !== "object") return null;
-  const snapshot = candidate as Record<string, unknown>;
-  const systemDefault = snapshot.systemDefault;
-  const commandTypeDefaults = snapshot.commandTypeDefaults;
-  if ((systemDefault !== "silent" && systemDefault !== "always_notify") || !commandTypeDefaults || typeof commandTypeDefaults !== "object") {
-    return null;
-  }
-  const normalized: Record<string, "silent" | "always_notify"> = {};
-  for (const [commandType, policy] of Object.entries(commandTypeDefaults as Record<string, unknown>)) {
-    if ((policy === "silent" || policy === "always_notify") && commandType.trim()) {
-      normalized[commandType] = policy;
-    }
-  }
-  return { systemDefault, commandTypeDefaults: normalized };
-}
-
-function summarizePolicyChange(requestData: unknown): string {
-  const previousPolicy = readPolicySnapshot(requestData, "previousPolicy");
-  const nextPolicy = readPolicySnapshot(requestData, "nextPolicy");
-  if (!previousPolicy || !nextPolicy) return "-";
-
-  const parts: string[] = [];
-  if (previousPolicy.systemDefault !== nextPolicy.systemDefault) {
-    parts.push(`系统默认策略 ${policyLabel(previousPolicy.systemDefault)} -> ${policyLabel(nextPolicy.systemDefault)}`);
-  }
-
-  const allKeys = Array.from(
-    new Set([...Object.keys(previousPolicy.commandTypeDefaults), ...Object.keys(nextPolicy.commandTypeDefaults)])
-  ).sort((a, b) => a.localeCompare(b));
-  const added: string[] = [];
-  const removed: string[] = [];
-  const changed: string[] = [];
-
-  for (const key of allKeys) {
-    const before = previousPolicy.commandTypeDefaults[key];
-    const after = nextPolicy.commandTypeDefaults[key];
-    if (!before && after) added.push(`${commandTypeLabel(key)}=${policyLabel(after)}`);
-    else if (before && !after) removed.push(`${commandTypeLabel(key)}=${policyLabel(before)}`);
-    else if (before && after && before !== after) changed.push(`${commandTypeLabel(key)}: ${policyLabel(before)} -> ${policyLabel(after)}`);
-  }
-
-  if (added.length) parts.push(`新增 ${added.join(", ")}`);
-  if (changed.length) parts.push(`修改 ${changed.join(", ")}`);
-  if (removed.length) parts.push(`移除 ${removed.join(", ")}`);
-  return parts.length ? parts.join("；") : "无策略差异";
-}
-
-function renderPolicySnapshot(snapshot: PolicySnapshot | null): string {
-  if (!snapshot) return "-";
-  const rows = Object.entries(snapshot.commandTypeDefaults)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([commandType, policy]) => `  ${commandTypeLabel(commandType)}：${policyLabel(policy)}`);
-  return [`系统默认策略：${policyLabel(snapshot.systemDefault)}`, "命令类型默认策略：", ...(rows.length ? rows : ["  无"])].join("\n");
-}
-
-async function copyText(text: string): Promise<void> {
-  if (!text.trim()) return;
-  if (typeof navigator === "undefined" || !navigator.clipboard) {
-    throw new Error("当前环境不支持剪贴板");
-  }
-  await navigator.clipboard.writeText(text);
-}
-
-function buildPolicyChangeMarkdown(log: OperationLogRow): string {
-  const previousPolicy = readPolicySnapshot(log.requestData, "previousPolicy");
-  const nextPolicy = readPolicySnapshot(log.requestData, "nextPolicy");
-  const details = diffPolicySnapshots(previousPolicy, nextPolicy);
-  const lines = [
-    `- 时间：${log.createdAt}`,
-    `- 用户：${log.username}`,
-    `- 状态：${operationStatusLabel(log.status)}`,
-    `- 摘要：${summarizePolicyChange(log.requestData)}`,
-    `- 系统默认策略：${
-      details?.systemDefaultChanged
-        ? `${previousPolicy ? policyLabel(previousPolicy.systemDefault) : "-"} -> ${nextPolicy ? policyLabel(nextPolicy.systemDefault) : "-"}`
-        : "无变化"
-    }`,
-    `- 新增：${details && details.added.length ? details.added.map((item) => `${commandTypeLabel(item.commandType)}=${policyLabel(item.policy)}`).join(", ") : "无"}`,
-    `- 修改：${
-      details && details.changed.length
-        ? details.changed.map((item) => `${commandTypeLabel(item.commandType)}: ${policyLabel(item.before)} -> ${policyLabel(item.after)}`).join(", ")
-        : "无"
-    }`,
-    `- 移除：${details && details.removed.length ? details.removed.map((item) => `${commandTypeLabel(item.commandType)}=${policyLabel(item.policy)}`).join(", ") : "无"}`
-  ];
-  return lines.join("\n");
-}
-
-function diffPolicySnapshots(previousPolicy: PolicySnapshot | null, nextPolicy: PolicySnapshot | null): PolicyChangeDetails | null {
-  if (!previousPolicy || !nextPolicy) return null;
-
-  const allKeys = Array.from(
-    new Set([...Object.keys(previousPolicy.commandTypeDefaults), ...Object.keys(nextPolicy.commandTypeDefaults)])
-  ).sort((a, b) => a.localeCompare(b));
-
-  const added: PolicyChangeDetails["added"] = [];
-  const removed: PolicyChangeDetails["removed"] = [];
-  const changed: PolicyChangeDetails["changed"] = [];
-
-  for (const key of allKeys) {
-    const before = previousPolicy.commandTypeDefaults[key];
-    const after = nextPolicy.commandTypeDefaults[key];
-    if (!before && after) added.push({ commandType: key, policy: after });
-    else if (before && !after) removed.push({ commandType: key, policy: before });
-    else if (before && after && before !== after) changed.push({ commandType: key, before, after });
-  }
-
-  return {
-    systemDefaultChanged: previousPolicy.systemDefault !== nextPolicy.systemDefault,
-    added,
-    removed,
-    changed
-  };
-}
-
-function buildPolicyChangeNotice(log: OperationLogRow): string {
-  const previousPolicy = readPolicySnapshot(log.requestData, "previousPolicy");
-  const nextPolicy = readPolicySnapshot(log.requestData, "nextPolicy");
-  const details = diffPolicySnapshots(previousPolicy, nextPolicy);
-  const lines = [
-    "命令成功通知默认表已更新",
-    `时间：${log.createdAt}`,
-    `操作人：${log.username}`,
-    `结果：${operationStatusLabel(log.status)}`,
-    `变更摘要：${summarizePolicyChange(log.requestData)}`,
-    `系统默认策略：${
-      details?.systemDefaultChanged
-        ? `${previousPolicy ? policyLabel(previousPolicy.systemDefault) : "-"} -> ${nextPolicy ? policyLabel(nextPolicy.systemDefault) : "-"}`
-        : "无变化"
-    }`,
-    `新增条目：${details && details.added.length ? details.added.map((item) => `${commandTypeLabel(item.commandType)}=${policyLabel(item.policy)}`).join("，") : "无"}`,
-    `修改条目：${
-      details && details.changed.length
-        ? details.changed.map((item) => `${commandTypeLabel(item.commandType)}: ${policyLabel(item.before)} -> ${policyLabel(item.after)}`).join("，")
-        : "无"
-    }`,
-    `移除条目：${details && details.removed.length ? details.removed.map((item) => `${commandTypeLabel(item.commandType)}=${policyLabel(item.policy)}`).join("，") : "无"}`,
-    "请相关运维/产品同学按需确认命令成功通知策略是否符合当前业务预期。"
-  ];
-  return lines.join("\n");
-}
-
-function buildPolicyChangeExportJson(log: OperationLogRow): string {
-  const previousPolicy = readPolicySnapshot(log.requestData, "previousPolicy");
-  const nextPolicy = readPolicySnapshot(log.requestData, "nextPolicy");
-  const details = diffPolicySnapshots(previousPolicy, nextPolicy);
-  return JSON.stringify(
-    {
-      createdAt: log.createdAt,
-      username: log.username,
-      status: operationStatusLabel(log.status),
-      summary: summarizePolicyChange(log.requestData),
-      previousPolicy,
-      nextPolicy,
-      diff: details
-    },
-    null,
-    2
-  );
-}
-
 export function SystemPage() {
   const api = useApi();
-  const { message, modal } = AntApp.useApp();
+  const { message } = AntApp.useApp();
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [liveFieldEdge, setLiveFieldEdge] = useState<FieldEdgeStatus | null>(null);
   const [fieldAlarmStatus, setFieldAlarmStatus] = useState<FieldAlarmStatus | null>(null);
   const [fieldAlarmBusy, setFieldAlarmBusy] = useState<"alarm_on" | "resolve" | null>(null);
-  const [policyLoading, setPolicyLoading] = useState(true);
-  const [policySaving, setPolicySaving] = useState(false);
-  const [policyHistoryLoading, setPolicyHistoryLoading] = useState(false);
-  const [policyDraft, setPolicyDraft] = useState<CommandSuccessNotificationPolicyConfig>({
-    systemDefault: "silent",
-    commandTypeDefaults: {}
-  });
-  const [policyHistory, setPolicyHistory] = useState<OperationLogRow[]>([]);
-  const [policyHistoryTotal, setPolicyHistoryTotal] = useState<number | null>(null);
   const [statusCheckedAt, setStatusCheckedAt] = useState<string | null>(null);
-  const [historyDetail, setHistoryDetail] = useState<OperationLogRow | null>(null);
-  const [newCommandType, setNewCommandType] = useState("");
-  const [newCommandTypePolicy, setNewCommandTypePolicy] = useState<"silent" | "always_notify">("silent");
-  const [selectedTemplate, setSelectedTemplate] = useState<string>();
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const refreshStatus = useCallback(async (options?: { silent?: boolean }) => {
@@ -1616,57 +1367,33 @@ export function SystemPage() {
     }
   }, [api, message]);
 
-  const refreshPolicy = useCallback(async () => {
-    setPolicyLoading(true);
+  const refreshFieldAlarmStatus = useCallback(async () => {
     try {
-      const policy = await api.system.getCommandSuccessNotificationPolicy();
-      setPolicyDraft(stripLegacyNodeAlarmPolicies(policy));
-    } finally {
-      setPolicyLoading(false);
-    }
-  }, [api]);
-
-  const refreshPolicyHistory = useCallback(async () => {
-    setPolicyHistoryLoading(true);
-    try {
-      const endTime = new Date().toISOString();
-      const startTime = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const logs = await api.system.getOperationLogs({
-        page: 1,
-        pageSize: 10,
-        module: "system",
-        action: "update_command_success_notification_policy",
-        startTime,
-        endTime
-      });
-      setPolicyHistory(logs.list);
-      setPolicyHistoryTotal(logs.total);
-    } finally {
-      setPolicyHistoryLoading(false);
+      const next = await api.fieldAlarm.getStatus();
+      setFieldAlarmStatus(next);
+      return next;
+    } catch {
+      return null;
     }
   }, [api]);
 
   useEffect(() => {
     void refreshStatus();
-    void refreshPolicy();
-    void refreshPolicyHistory();
-  }, [refreshPolicy, refreshPolicyHistory, refreshStatus]);
+  }, [refreshStatus]);
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const timer = window.setInterval(() => {
+    const statusTimer = window.setInterval(() => {
       void refreshStatus({ silent: true });
     }, 15_000);
-    return () => window.clearInterval(timer);
-  }, [autoRefresh, refreshStatus]);
-
-  const policyRows = useMemo<PolicyRow[]>(
-    () =>
-      Object.entries(policyDraft.commandTypeDefaults)
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([commandType, policy]) => ({ commandType, policy })),
-    [policyDraft.commandTypeDefaults]
-  );
+    const alarmTimer = window.setInterval(() => {
+      void refreshFieldAlarmStatus();
+    }, 2_000);
+    return () => {
+      window.clearInterval(statusTimer);
+      window.clearInterval(alarmTimer);
+    };
+  }, [autoRefresh, refreshFieldAlarmStatus, refreshStatus]);
 
   const serviceItems = useMemo(
     () =>
@@ -1821,21 +1548,18 @@ export function SystemPage() {
     };
   }, [fieldEdge]);
 
-  const savePolicy = async () => {
-    setPolicySaving(true);
-    try {
-      const updated = await api.system.updateCommandSuccessNotificationPolicy(stripLegacyNodeAlarmPolicies(policyDraft));
-      setPolicyDraft(stripLegacyNodeAlarmPolicies(updated));
-      message.success("已保存命令成功通知默认表");
-      await refreshPolicyHistory();
-    } catch (err) {
-      message.error((err as Error).message);
-    } finally {
-      setPolicySaving(false);
-    }
-  };
+  const fieldAlarmActuator = fieldAlarmStatus?.actuator ?? null;
+  const fieldAlarmTerminal = getFieldAlarmTerminal(fieldAlarmActuator);
+  const fieldAlarmBridgeAvailable = fieldAlarmActuator?.available === true && fieldAlarmActuator.dryRun !== true;
+  const fieldAlarmBoardOnline = isFieldAlarmTerminalOnline(fieldAlarmActuator);
+  const fieldAlarmInSync = fieldAlarmBoardOnline && fieldAlarmTerminal?.inSync === true;
+  const fieldAlarmFirmware = fieldAlarmTerminalFirmware(fieldAlarmActuator);
 
   const issueFieldAlarmAction = async (action: "alarm_on" | "resolve") => {
+    if (action === "alarm_on" && !fieldAlarmBoardOnline) {
+      message.warning("RK2206 当前离线，无法确认现场启动，已阻止本次操作");
+      return;
+    }
     setFieldAlarmBusy(action);
     try {
       const fieldAlarmActionInput: Parameters<typeof api.fieldAlarm.sendAction>[0] = {
@@ -1846,57 +1570,29 @@ export function SystemPage() {
         fieldAlarmActionInput.alertId = fieldAlarmStatus.latestAlert.alertId;
       }
       const result = await api.fieldAlarm.sendAction(fieldAlarmActionInput);
-      if (result.accepted) {
-        message.success(action === "alarm_on" ? "Tongxiao RK2206 告警终端已启动" : "告警终端已停止，当前告警已解除");
-      } else {
+      if (!result.accepted) {
         message.error(`Tongxiao RK2206 未确认告警动作：${result.actuator.lastError ?? "告警终端未连接"}`);
+      } else {
+        const terminal = getFieldAlarmTerminal(result.actuator);
+        setFieldAlarmStatus((previous) => previous ? { ...previous, actuator: result.actuator } : previous);
+        if (terminal?.boardOnline && terminal.inSync) {
+          message.success(action === "alarm_on" ? "RK2206 已确认启动现场告警" : "RK2206 已确认停止现场告警");
+        } else if (action === "alarm_on") {
+          message.info("启动指令已送达告警桥，等待 RK2206 状态回报");
+        } else if (terminal?.boardOnline) {
+          message.info("停止指令已送达，等待 RK2206 状态回报");
+        } else {
+          message.info("停止状态已由云端保留，RK2206 重连后将保持关闭");
+        }
       }
-      await refreshStatus({ silent: true });
+      void refreshFieldAlarmStatus();
+      window.setTimeout(() => void refreshFieldAlarmStatus(), 800);
+      window.setTimeout(() => void refreshFieldAlarmStatus(), 2_500);
     } catch (err) {
       message.error((err as Error).message);
     } finally {
       setFieldAlarmBusy(null);
     }
-  };
-
-  const addPolicyRow = (commandType = newCommandType, policy = newCommandTypePolicy) => {
-    const key = commandType.trim();
-    if (!key) {
-      message.info("命令类型不能为空");
-      return;
-    }
-    if (key.length > 50) {
-      message.error("命令类型长度不能超过 50");
-      return;
-    }
-    if (policyDraft.commandTypeDefaults[key]) {
-      message.info("该命令类型已存在");
-      return;
-    }
-    setPolicyDraft((prev) => ({
-      ...prev,
-      commandTypeDefaults: {
-        ...prev.commandTypeDefaults,
-        [key]: policy
-      }
-    }));
-    setNewCommandType("");
-    setNewCommandTypePolicy("silent");
-  };
-
-  const restoreRecommendedDefaults = () => {
-    setPolicyDraft(stripLegacyNodeAlarmPolicies(RECOMMENDED_POLICY_DEFAULTS));
-    message.success("已恢复推荐默认表，请继续保存生效");
-  };
-
-  const addTemplateRow = () => {
-    const template = POLICY_TEMPLATES.find((item) => item.commandType === selectedTemplate);
-    if (!template) {
-      message.info("请先选择模板");
-      return;
-    }
-    addPolicyRow(template.commandType, template.policy);
-    setSelectedTemplate(undefined);
   };
 
   return (
@@ -1906,18 +1602,15 @@ export function SystemPage() {
           <Typography.Title level={3} style={{ margin: 0, color: "rgba(226, 232, 240, 0.96)" }}>
             系统监控
           </Typography.Title>
-          <Typography.Text type="secondary">核心服务、边缘链路与命令策略的生产运行总览。</Typography.Text>
+          <Typography.Text type="secondary">核心服务、边缘链路与现场告警终端的生产运行总览。</Typography.Text>
         </div>
         <Space wrap>
           <Space size={8}>
-            <Typography.Text type="secondary">状态 15s · 倾角 5s</Typography.Text>
+            <Typography.Text type="secondary">系统 15s · 告警 2s · 倾角 5s</Typography.Text>
             <Switch size="small" checked={autoRefresh} onChange={setAutoRefresh} />
           </Space>
           <Button icon={<ReloadOutlined />} onClick={() => void refreshStatus()} loading={loading}>
             刷新状态
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={() => void refreshPolicy()} loading={policyLoading}>
-            刷新默认表
           </Button>
         </Space>
       </div>
@@ -1972,11 +1665,6 @@ export function SystemPage() {
               {hermesConfidencePercent == null ? "等待模型诊断" : `置信度 ${hermesConfidencePercent}%`}
             </div>
           </div>
-          <div className="system-page-hero-metric">
-            <div className="system-page-hero-k">策略记录</div>
-            <div className="system-page-hero-v">{formatMetric(policyHistoryTotal)}</div>
-            <div className="system-page-hero-note">API 返回的近 30 天总数</div>
-          </div>
         </div>
       </section>
 
@@ -1984,11 +1672,17 @@ export function SystemPage() {
         title="Tongxiao RK2206 现场告警终端"
         extra={
           <Space size={8} wrap>
-            <Tag color={fieldAlarmStatus == null ? "default" : fieldAlarmStatus.actuator.available ? "green" : "orange"}>
-              {fieldAlarmStatus == null ? "执行器状态未上报" : fieldAlarmStatus.actuator.available ? "执行器已连接" : "执行器待确认"}
+            <Tag color={fieldAlarmStatus == null ? "default" : fieldAlarmBridgeAvailable ? "green" : "orange"}>
+              {fieldAlarmStatus == null ? "告警桥状态未上报" : fieldAlarmBridgeAvailable ? "告警桥已连接" : "告警桥不可用"}
+            </Tag>
+            <Tag color={fieldAlarmStatus == null ? "default" : fieldAlarmBoardOnline ? "green" : "red"}>
+              {fieldAlarmStatus == null ? "板端状态未上报" : fieldAlarmBoardOnline ? "RK2206 在线" : "RK2206 离线"}
+            </Tag>
+            <Tag color={fieldAlarmInSync ? "green" : fieldAlarmBoardOnline ? "gold" : "default"}>
+              {fieldAlarmInSync ? "状态已同步" : fieldAlarmBoardOnline ? "等待状态回报" : "状态未同步"}
             </Tag>
             <Tag color={fieldAlarmStatus?.active ? "red" : fieldAlarmStatus?.silenced ? "gold" : "default"}>
-              {fieldAlarmStatus == null ? "运行状态未上报" : fieldAlarmStatus.active ? "报警中" : fieldAlarmStatus.silenced ? "已停止" : "待命"}
+              {fieldAlarmStatus == null ? "告警状态未上报" : fieldAlarmStatus.active ? "平台告警中" : fieldAlarmStatus.silenced ? "复核中" : "待命"}
             </Tag>
           </Space>
         }
@@ -1998,18 +1692,28 @@ export function SystemPage() {
             <div className="system-page-field-alarm-title">
               {fieldAlarmStatus == null
                 ? "等待现场告警终端状态"
-                : fieldAlarmStatus.active
-                  ? "服务器正在驱动现场告警终端"
-                  : "手动联调云端 -> Tongxiao RK2206 告警链路"}
+                : !fieldAlarmBridgeAvailable
+                  ? "云端告警桥不可用"
+                  : !fieldAlarmBoardOnline
+                    ? fieldAlarmStatus.active
+                      ? "监测告警已触发，RK2206 当前离线"
+                      : "RK2206 现场终端离线"
+                    : !fieldAlarmInSync
+                      ? "等待 RK2206 确认最新状态"
+                      : fieldAlarmStatus.active
+                        ? "RK2206 正在执行现场告警"
+                        : "现场告警链路待命"}
             </div>
-            <div className="system-page-field-alarm-detail">
-              {fieldAlarmStatus?.actuator.detail ??
-                (fieldAlarmStatus
-                  ? "通过中心 API 下发到 Tongxiao RK2206 的蜂鸣器、马达、RGB 与 LCD。"
-                  : "当前尚未读取到现场告警终端 API 状态。")}
+            <div className="system-page-field-alarm-facts">
+              <div><span>云端告警桥</span><strong>{fieldAlarmBridgeAvailable ? "已连接" : "不可用"}</strong></div>
+              <div><span>现场板端</span><strong>{fieldAlarmBoardOnline ? "在线" : "离线"}</strong></div>
+              <div><span>状态同步</span><strong>{fieldAlarmInSync ? "已确认" : "等待回报"}</strong></div>
+              <div><span>最近心跳</span><strong>{formatFieldAlarmPresenceAge(fieldAlarmTerminal?.presenceAgeSeconds)}</strong></div>
+              <div><span>固件版本</span><strong>{fieldAlarmFirmware ?? "未上报"}</strong></div>
+              <div><span>最近动作</span><strong>{formatTimestamp(fieldAlarmActuator?.lastActionAt)}</strong></div>
             </div>
-            {fieldAlarmStatus?.actuator.lastActionAt ? (
-              <div className="system-page-field-alarm-time">最近动作 {formatTimestamp(fieldAlarmStatus.actuator.lastActionAt)}</div>
+            {fieldAlarmActuator?.lastError ? (
+              <div className="system-page-field-alarm-error">{fieldAlarmActuator.lastError}</div>
             ) : null}
           </div>
           <Space wrap>
@@ -2017,15 +1721,17 @@ export function SystemPage() {
               danger
               type="primary"
               loading={fieldAlarmBusy === "alarm_on"}
+              disabled={!fieldAlarmBridgeAvailable || !fieldAlarmBoardOnline || fieldAlarmStatus?.active === true}
               onClick={() => void issueFieldAlarmAction("alarm_on")}
             >
               启动现场告警
             </Button>
             <Button
               loading={fieldAlarmBusy === "resolve"}
+              disabled={!fieldAlarmBridgeAvailable}
               onClick={() => void issueFieldAlarmAction("resolve")}
             >
-              停止现场告警
+              停止并保持关闭
             </Button>
           </Space>
         </div>
@@ -2295,317 +2001,6 @@ export function SystemPage() {
       </div>
 
       <TiltBusinessSurfaceView data={realtimeTiltSurface} />
-
-      <div className="system-page-spacer" />
-
-      <div className="system-page-section-head">
-        <div>
-          <div className="system-page-section-title">运维策略与审计</div>
-          <div className="system-page-section-desc">配置类内容从运行监控主视线下移，避免和实时状态混在一起。</div>
-        </div>
-      </div>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={15}>
-          <BaseCard
-            title="命令成功通知默认表"
-            extra={
-              <Space wrap>
-                <Button onClick={restoreRecommendedDefaults}>恢复推荐默认表</Button>
-                <Button type="primary" icon={<SaveOutlined />} onClick={() => void savePolicy()} loading={policySaving}>
-                  保存默认表
-                </Button>
-              </Space>
-            }
-          >
-            <div className="system-page-toolbar">
-              <div className="system-page-toolbar-group">
-                <Typography.Text strong>系统默认策略</Typography.Text>
-                <Select
-                  value={policyDraft.systemDefault}
-                  style={{ width: 180 }}
-                  onChange={(value) => setPolicyDraft((prev) => ({ ...prev, systemDefault: value }))}
-                  options={[
-                    { value: "silent", label: policyLabel("silent") },
-                    { value: "always_notify", label: policyLabel("always_notify") }
-                  ]}
-                />
-              </div>
-              <Typography.Text type="secondary">当某个命令类型没有单独配置时，使用这里的默认通知策略。</Typography.Text>
-            </div>
-
-            <div className="system-page-toolbar">
-              <Input
-                value={newCommandType}
-                placeholder="新增命令类型，例如 custom_reboot"
-                style={{ width: 280 }}
-                onChange={(e) => setNewCommandType(e.target.value)}
-              />
-              <Select
-                value={newCommandTypePolicy}
-                style={{ width: 160 }}
-                onChange={(value) => setNewCommandTypePolicy(value)}
-                options={[
-                  { value: "silent", label: policyLabel("silent") },
-                  { value: "always_notify", label: policyLabel("always_notify") }
-                ]}
-              />
-              <Button icon={<PlusOutlined />} onClick={() => addPolicyRow()}>
-                新增条目
-              </Button>
-            </div>
-
-            <div className="system-page-toolbar">
-              <Select
-                value={selectedTemplate}
-                allowClear
-                placeholder="从常用模板快速新增"
-                style={{ width: 320 }}
-                onChange={(value) => setSelectedTemplate(value)}
-                options={POLICY_TEMPLATES.map((item) => ({
-                  value: item.commandType,
-                  label: `${item.label}（${policyLabel(item.policy)}）`
-                }))}
-              />
-              <Button onClick={addTemplateRow}>添加模板</Button>
-            </div>
-
-            <div className="desk-dark-table system-page-table-wrap">
-              <Table
-                rowKey="commandType"
-                size="small"
-                loading={policyLoading}
-                pagination={false}
-                scroll={{ x: 720 }}
-                dataSource={policyRows}
-                columns={[
-                  {
-                    title: "命令类型",
-                    dataIndex: "commandType",
-                    render: (value: string) => <span>{commandTypeLabel(value)}</span>
-                  },
-                  {
-                    title: "默认策略",
-                    dataIndex: "policy",
-                    width: 180,
-                    render: (_: unknown, row: PolicyRow) => (
-                      <Select
-                        value={row.policy}
-                        style={{ width: 160 }}
-                        onChange={(value) =>
-                          setPolicyDraft((prev) => ({
-                            ...prev,
-                            commandTypeDefaults: {
-                              ...prev.commandTypeDefaults,
-                              [row.commandType]: value
-                            }
-                          }))
-                        }
-                        options={[
-                          { value: "silent", label: policyLabel("silent") },
-                          { value: "always_notify", label: policyLabel("always_notify") }
-                        ]}
-                      />
-                    )
-                  },
-                  {
-                    title: "操作",
-                    width: 90,
-                    render: (_: unknown, row: PolicyRow) => (
-                      <Button
-                        danger
-                        size="small"
-                        icon={<DeleteOutlined />}
-                        onClick={() =>
-                          modal.confirm({
-                            title: "移除默认策略条目",
-                            content: `确认移除 ${row.commandType} 吗？保存后才会正式生效。`,
-                            okText: "移除",
-                            okButtonProps: { danger: true },
-                            cancelText: "取消",
-                            onOk: () =>
-                              setPolicyDraft((prev) => {
-                                const next = { ...prev.commandTypeDefaults };
-                                delete next[row.commandType];
-                                return { ...prev, commandTypeDefaults: next };
-                              })
-                          })
-                        }
-                      >
-                        移除
-                      </Button>
-                    )
-                  }
-                ]}
-              />
-            </div>
-          </BaseCard>
-        </Col>
-
-        <Col xs={24} xl={9}>
-          <BaseCard
-            title="最近变更"
-            extra={
-              <Button icon={<ReloadOutlined />} onClick={() => void refreshPolicyHistory()} loading={policyHistoryLoading}>
-                刷新历史
-              </Button>
-            }
-          >
-            <div className="system-page-history-kpi">
-              <div className="system-page-history-kpi-item">
-                <div className="system-page-history-kpi-label">30 天内</div>
-                <div className="system-page-history-kpi-value">{policyHistory.length}</div>
-                <div className="system-page-history-kpi-note">策略变更记录</div>
-              </div>
-              <div className="system-page-history-kpi-item">
-                <div className="system-page-history-kpi-label">默认表条目</div>
-                <div className="system-page-history-kpi-value">{policyRows.length}</div>
-                <div className="system-page-history-kpi-note">系统默认：{policyLabel(policyDraft.systemDefault)}</div>
-              </div>
-            </div>
-
-            <div className="desk-dark-table system-page-table-wrap">
-              <Table
-                rowKey="id"
-                size="small"
-                loading={policyHistoryLoading}
-                pagination={false}
-                scroll={{ x: 720 }}
-                dataSource={policyHistory}
-                columns={[
-                  {
-                    title: "创建时间",
-                    dataIndex: "createdAt",
-                    width: 176,
-                    render: (value: string) => <span className="system-page-mono">{value}</span>
-                  },
-                  { title: "操作人", dataIndex: "username", width: 110 },
-                  { title: "结果", dataIndex: "status", width: 96, render: (value: string) => operationStatusLabel(value) },
-                  {
-                    title: "变更摘要",
-                    dataIndex: "requestData",
-                    render: (value: unknown) => <span className="system-page-history-summary">{summarizePolicyChange(value)}</span>
-                  },
-                  {
-                    title: "详情",
-                    width: 90,
-                    render: (_: unknown, row: OperationLogRow) => (
-                      <Button size="small" onClick={() => setHistoryDetail(row)}>
-                        查看
-                      </Button>
-                    )
-                  }
-                ]}
-              />
-            </div>
-          </BaseCard>
-        </Col>
-      </Row>
-
-      <Modal
-        title="默认表变更详情"
-        open={historyDetail !== null}
-        width={980}
-        footer={null}
-        onCancel={() => setHistoryDetail(null)}
-      >
-        {historyDetail ? (
-          (() => {
-            const previousPolicy = readPolicySnapshot(historyDetail.requestData, "previousPolicy");
-            const nextPolicy = readPolicySnapshot(historyDetail.requestData, "nextPolicy");
-            const details = diffPolicySnapshots(previousPolicy, nextPolicy);
-            return (
-              <div className="system-page-modal-grid">
-                <div className="system-page-modal-head">
-                  <Typography.Text type="secondary">时间：{historyDetail.createdAt}</Typography.Text>
-                  <Typography.Text type="secondary">用户：{historyDetail.username}</Typography.Text>
-                  <Typography.Text type="secondary">状态：{operationStatusLabel(historyDetail.status)}</Typography.Text>
-                </div>
-                <div>
-                  <div className="system-page-modal-actions">
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        void copyText(summarizePolicyChange(historyDetail.requestData))
-                          .then(() => message.success("已复制差异摘要"))
-                          .catch((error: unknown) => message.error(error instanceof Error ? error.message : String(error)));
-                      }}
-                    >
-                      复制差异摘要
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        void copyText(buildPolicyChangeMarkdown(historyDetail))
-                          .then(() => message.success("已复制文档摘要"))
-                          .catch((error: unknown) => message.error(error instanceof Error ? error.message : String(error)));
-                      }}
-                    >
-                      复制文档摘要
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        void copyText(buildPolicyChangeNotice(historyDetail))
-                          .then(() => message.success("已复制变更通告模板"))
-                          .catch((error: unknown) => message.error(error instanceof Error ? error.message : String(error)));
-                      }}
-                    >
-                      复制变更通告模板
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        void copyText(buildPolicyChangeExportJson(historyDetail))
-                          .then(() => message.success("已复制完整差异 JSON"))
-                          .catch((error: unknown) => message.error(error instanceof Error ? error.message : String(error)));
-                      }}
-                    >
-                      复制完整差异 JSON
-                    </Button>
-                  </div>
-                  <div className="system-page-history-summary system-page-modal-summary">{summarizePolicyChange(historyDetail.requestData)}</div>
-                </div>
-                <div className="system-page-modal-diff">
-                  <Typography.Text strong>差异</Typography.Text>
-                  <div className="system-page-mono">
-                    系统默认策略：
-                    {details?.systemDefaultChanged
-                      ? `${previousPolicy ? policyLabel(previousPolicy.systemDefault) : "-"} -> ${nextPolicy ? policyLabel(nextPolicy.systemDefault) : "-"}`
-                      : "无变化"}
-                  </div>
-                  <div className="system-page-mono">
-                    新增：
-                    {details && details.added.length
-                      ? details.added.map((item) => `${commandTypeLabel(item.commandType)}=${policyLabel(item.policy)}`).join(", ")
-                      : "无"}
-                  </div>
-                  <div className="system-page-mono">
-                    修改：
-                    {details && details.changed.length
-                      ? details.changed.map((item) => `${commandTypeLabel(item.commandType)}: ${policyLabel(item.before)} -> ${policyLabel(item.after)}`).join(", ")
-                      : "无"}
-                  </div>
-                  <div className="system-page-mono">
-                    移除：
-                    {details && details.removed.length
-                      ? details.removed.map((item) => `${commandTypeLabel(item.commandType)}=${policyLabel(item.policy)}`).join(", ")
-                      : "无"}
-                  </div>
-                </div>
-                <div className="system-page-modal-snapshots">
-                  <Card size="small" title="变更前">
-                    <pre className="system-page-pre">{renderPolicySnapshot(previousPolicy)}</pre>
-                  </Card>
-                  <Card size="small" title="变更后">
-                    <pre className="system-page-pre">{renderPolicySnapshot(nextPolicy)}</pre>
-                  </Card>
-                </div>
-              </div>
-            );
-          })()
-        ) : null}
-      </Modal>
     </div>
   );
 }

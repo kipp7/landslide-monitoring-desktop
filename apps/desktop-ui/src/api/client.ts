@@ -270,7 +270,39 @@ export type FieldAlarmActuatorStatus = {
   lastError?: string | null;
   detail?: string;
   yx75r?: unknown;
-  tongxiao?: unknown;
+  tongxiao?: FieldAlarmTongxiaoStatus;
+};
+
+export type FieldAlarmTongxiaoStatus = {
+  deviceId: string;
+  mqttConnected: boolean;
+  boardOnline: boolean;
+  inSync: boolean;
+  desired?: {
+    revision?: number;
+    issued_ts?: string;
+    state?: string;
+    severity?: string;
+  } | null;
+  reported?: {
+    applied_revision?: number;
+    reported_ts?: string;
+    state?: string;
+    severity?: string;
+    firmware_version?: string;
+    last_error?: string | null;
+  } | null;
+  presence?: {
+    event_ts?: string;
+    status?: string;
+    meta?: {
+      fw?: string;
+      role?: string;
+    };
+  } | null;
+  presenceAgeSeconds: number | null;
+  presenceStaleSeconds: number;
+  voiceEnabled?: boolean;
 };
 
 export type FieldAlarmStatus = {
