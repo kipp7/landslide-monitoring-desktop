@@ -280,7 +280,7 @@ function HermesVolatilityThreeSurface({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pendingSurfaceRef = useRef(incomingSurface);
   const interactionActiveRef = useRef(false);
-  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: 0.9, autoRotate: true });
+  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: 0.9 });
   const [surface, setSurface] = useState(incomingSurface);
 
   useEffect(() => {
@@ -344,6 +344,7 @@ function HermesVolatilityThreeSurface({
     const sceneObjects: THREE.Object3D[] = [];
     const disposableGeometries: THREE.BufferGeometry[] = [];
     const disposableMaterials: THREE.Material[] = [];
+    const disposableTextures: THREE.Texture[] = [];
 
     const pointPosition = (horizonIndex: number, dimensionIndex: number) => {
       const horizon = horizons[horizonIndex] ?? 0;
@@ -556,20 +557,84 @@ function HermesVolatilityThreeSurface({
       });
     }
 
-    const axesMaterial = new THREE.LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.34 });
-    const axesGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3),
-      new THREE.Vector3(xOffset + 0.5, 0, -zOffset - 0.3),
-      new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3),
-      new THREE.Vector3(-xOffset - 0.42, 0, zOffset + 0.46),
-      new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3),
-      new THREE.Vector3(-xOffset - 0.42, 0.18 + 142 * yScale, -zOffset - 0.3)
-    ]);
-    const axes = new THREE.LineSegments(axesGeometry, axesMaterial);
-    world.add(axes);
-    sceneObjects.push(axes);
-    disposableGeometries.push(axesGeometry);
-    disposableMaterials.push(axesMaterial);
+    const axesOrigin = new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3);
+    const axisDefinitions = [
+      {
+        label: "X",
+        direction: new THREE.Vector3(1, 0, 0),
+        length: xOffset * 2 + 0.92,
+        color: 0xfb7185
+      },
+      {
+        label: "Y",
+        direction: new THREE.Vector3(0, 1, 0),
+        length: 0.18 + 142 * yScale,
+        color: 0x4ade80
+      },
+      {
+        label: "Z",
+        direction: new THREE.Vector3(0, 0, 1),
+        length: zOffset * 2 + 0.76,
+        color: 0x60a5fa
+      }
+    ] as const;
+
+    axisDefinitions.forEach(({ label, direction, length, color }) => {
+      const arrow = new THREE.ArrowHelper(
+        direction,
+        axesOrigin,
+        length,
+        color,
+        Math.min(0.3, length * 0.12),
+        Math.min(0.14, length * 0.06)
+      );
+      const arrowLineMaterial = arrow.line.material as THREE.LineBasicMaterial;
+      const arrowConeMaterial = arrow.cone.material as THREE.MeshBasicMaterial;
+      arrowLineMaterial.transparent = true;
+      arrowLineMaterial.opacity = 0.84;
+      arrowConeMaterial.transparent = true;
+      arrowConeMaterial.opacity = 0.94;
+      world.add(arrow);
+      sceneObjects.push(arrow);
+      disposableGeometries.push(arrow.line.geometry, arrow.cone.geometry);
+      disposableMaterials.push(arrowLineMaterial, arrowConeMaterial);
+
+      const labelCanvas = document.createElement("canvas");
+      labelCanvas.width = 96;
+      labelCanvas.height = 96;
+      const labelContext = labelCanvas.getContext("2d");
+      if (!labelContext) return;
+      const labelColor = new THREE.Color(color);
+      labelContext.fillStyle = "rgba(2, 6, 23, 0.86)";
+      labelContext.beginPath();
+      labelContext.arc(48, 48, 34, 0, Math.PI * 2);
+      labelContext.fill();
+      labelContext.lineWidth = 5;
+      labelContext.strokeStyle = `#${labelColor.getHexString()}`;
+      labelContext.stroke();
+      labelContext.fillStyle = "#f8fafc";
+      labelContext.font = "700 46px sans-serif";
+      labelContext.textAlign = "center";
+      labelContext.textBaseline = "middle";
+      labelContext.fillText(label, 48, 51);
+
+      const labelTexture = new THREE.CanvasTexture(labelCanvas);
+      labelTexture.colorSpace = THREE.SRGBColorSpace;
+      disposableTextures.push(labelTexture);
+      const labelMaterial = new THREE.SpriteMaterial({
+        map: labelTexture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false
+      });
+      const labelSprite = new THREE.Sprite(labelMaterial);
+      labelSprite.position.copy(axesOrigin).addScaledVector(direction, length + 0.24);
+      labelSprite.scale.set(0.42, 0.42, 1);
+      labelSprite.renderOrder = 10;
+      world.add(labelSprite);
+      sceneObjects.push(labelSprite);
+      disposableMaterials.push(labelMaterial);
+    });
 
     const dimensionAverages = dimensions
       .map((dimension, index) => {
@@ -848,8 +913,7 @@ function HermesVolatilityThreeSurface({
       viewStateRef.current = {
         yaw: targetYaw,
         pitch: targetPitch,
-        zoom: camera.zoom,
-        autoRotate: viewStateRef.current.autoRotate
+        zoom: camera.zoom
       };
     };
     const applyPendingSurface = () => {
@@ -864,7 +928,6 @@ function HermesVolatilityThreeSurface({
     const handlePointerDown = (event: PointerEvent) => {
       isDragging = true;
       interactionActiveRef.current = true;
-      viewStateRef.current.autoRotate = false;
       targetYaw = currentYaw;
       window.clearTimeout(wheelReleaseTimer);
       lastPointerX = event.clientX;
@@ -911,7 +974,7 @@ function HermesVolatilityThreeSurface({
     let animationFrameId = 0;
     const animate = () => {
       if (disposed) return;
-      if (!isDragging && viewStateRef.current.autoRotate) targetYaw += 0.00012;
+      if (!isDragging) targetYaw += 0.00012;
       currentYaw += (targetYaw - currentYaw) * 0.08;
       currentPitch += (targetPitch - currentPitch) * 0.08;
       world.rotation.set(currentPitch, currentYaw, 0);
@@ -935,6 +998,7 @@ function HermesVolatilityThreeSurface({
       sceneObjects.forEach((object) => world.remove(object));
       disposableGeometries.forEach((item) => item.dispose());
       disposableMaterials.forEach((item) => item.dispose());
+      disposableTextures.forEach((item) => item.dispose());
       renderer.renderLists.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
