@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Card, Col, Input, Modal, Progress, Row, Select, Skeleton, Space, Switch, Table, Tag, Typography } from "antd";
+import { App as AntApp, Button, Card, Col, Input, Modal, Row, Select, Skeleton, Space, Switch, Table, Tag, Typography } from "antd";
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +8,6 @@ import type {
   CommandSuccessNotificationPolicyConfig,
   Device,
   DeviceStateSnapshot,
-  FieldEdgeNodeStatus,
   FieldEdgeStatus,
   FieldAlarmStatus,
   OperationLogRow,
@@ -64,13 +63,6 @@ function healthAccent(status: SystemStatus["items"][number]["status"]): string {
   return "#94a3b8";
 }
 
-function healthPercent(status: SystemStatus["items"][number]["status"]): number {
-  if (status === "healthy") return 100;
-  if (status === "degraded") return 64;
-  if (status === "not_configured") return 36;
-  return 18;
-}
-
 function healthTag(status: SystemStatus["items"][number]["status"]) {
   const color =
     status === "healthy" ? "green" : status === "degraded" ? "orange" : status === "not_configured" ? "blue" : "default";
@@ -95,6 +87,7 @@ function serviceScopeLabel(key: string): string {
 
 function edgeLevelLabel(level: string | null | undefined): string {
   if (level === "healthy") return "健康";
+  if (level === "degraded") return "降级";
   if (level === "attention") return "关注";
   if (level === "critical") return "严重";
   if (level === "offline") return "离线";
@@ -103,25 +96,18 @@ function edgeLevelLabel(level: string | null | undefined): string {
 
 function edgeLevelColor(level: string | null | undefined): string {
   if (level === "healthy") return "#22c55e";
+  if (level === "degraded") return "#f59e0b";
   if (level === "attention") return "#f59e0b";
   if (level === "critical") return "#ef4444";
   if (level === "offline") return "#94a3b8";
   return "#38bdf8";
 }
 
-function edgeLevelPercent(level: string | null | undefined): number {
-  if (level === "healthy") return 100;
-  if (level === "attention") return 62;
-  if (level === "critical") return 24;
-  if (level === "offline") return 8;
-  return 35;
-}
-
 function edgeLevelTag(level: string | null | undefined) {
   const color =
     level === "healthy"
       ? "green"
-      : level === "attention"
+      : level === "attention" || level === "degraded"
         ? "orange"
         : level === "critical"
           ? "red"
@@ -156,24 +142,10 @@ function edgeNodeTag(status: string) {
   return <Tag color={color}>{label}</Tag>;
 }
 
-function nodeStatusPercent(status: string): number {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === "online") return 100;
-  if (normalized === "degraded") return 64;
-  if (normalized === "configured") return 48;
-  if (normalized === "offline") return 12;
-  return 32;
-}
-
-function nodeQualityStatusPercent(node: FieldEdgeNodeStatus): number | null {
-  if (node.deferred || node.enabled === false) return null;
-  return nodeStatusPercent(node.status);
-}
-
 function boolLabel(value: boolean | null | undefined): string {
   if (value === true) return "是";
   if (value === false) return "否";
-  return "-";
+  return "未上报";
 }
 
 function productStatusDetail(value: string | null | undefined): string {
@@ -249,7 +221,7 @@ function modelJudgementLabel(value: string | null | undefined): string {
 }
 
 function formatMetric(value: number | null | undefined, suffix = ""): string {
-  if (value == null || Number.isNaN(value)) return "-";
+  if (value == null || Number.isNaN(value)) return "未上报";
   return `${value}${suffix}`;
 }
 
@@ -257,24 +229,8 @@ function metricChartValue(value: number | null | undefined): number | null {
   return value == null || Number.isNaN(value) ? null : value;
 }
 
-function freshnessPercent(ageSeconds: number | null | undefined): number | null {
-  if (ageSeconds == null || Number.isNaN(ageSeconds)) return null;
-  if (ageSeconds <= 15) return 100;
-  if (ageSeconds <= 30) return clampPercent(100 - (ageSeconds - 15) * (20 / 15));
-  if (ageSeconds <= 90) return clampPercent(80 - (ageSeconds - 30) * (40 / 60));
-  if (ageSeconds <= 300) return clampPercent(40 - (ageSeconds - 90) * (40 / 210));
-  return 0;
-}
-
-function forwardLoopPercent(node: FieldEdgeNodeStatus): number | null {
-  if (node.deferred || node.enabled === false) return null;
-  if (node.commandForwards == null || node.commandForwards <= 0) return null;
-  if (node.telemetryMessages == null) return null;
-  return clampPercent((node.telemetryMessages / Math.max(node.commandForwards, 1)) * 100);
-}
-
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "-";
+  if (!value) return "未上报";
   return formatBeijingDateTime(value, undefined, value);
 }
 
@@ -915,10 +871,6 @@ function darkTooltip() {
   };
 }
 
-function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
 function normalizeIdentityClass(value?: string | null): string {
   return value?.trim().toLowerCase() ?? "";
 }
@@ -957,7 +909,7 @@ function buildLiveFieldEdgeFallback(
         enabled: null,
         deferred: false,
         status: deriveLiveNodeStatus(device, lastTelemetryAgeSeconds),
-        telemetryMessages: snapshot ? 1 : 0,
+        telemetryMessages: null,
         commandForwards: null,
         ackPublishes: null,
         lastTelemetryAgeSeconds,
@@ -968,12 +920,23 @@ function buildLiveFieldEdgeFallback(
 
   const onlineCount = nodes.filter((node) => node.status === "online").length;
   const degradedCount = nodes.filter((node) => node.status === "degraded").length;
-  const score = clampPercent(((onlineCount + degradedCount * 0.6) / Math.max(nodes.length, 1)) * 100);
-  const maxTelemetryAge = nodes
+  const offlineCount = nodes.filter((node) => node.status === "offline").length;
+  const freshestTelemetryAge = nodes
     .map((node) => node.lastTelemetryAgeSeconds)
     .filter((value): value is number => typeof value === "number")
-    .reduce<number | null>((current, value) => (current == null ? value : Math.max(current, value)), null);
-  const overallLevel = score >= 90 ? "healthy" : score >= 60 ? "attention" : score > 0 ? "critical" : "offline";
+    .reduce<number | null>((current, value) => (current == null ? value : Math.min(current, value)), null);
+  const overallLevel =
+    onlineCount > 0
+      ? offlineCount > 0
+        ? "degraded"
+        : degradedCount > 0
+          ? "attention"
+          : "healthy"
+      : degradedCount > 0
+        ? "attention"
+        : offlineCount > 0
+          ? "offline"
+          : null;
 
   return {
     available: true,
@@ -985,15 +948,15 @@ function buildLiveFieldEdgeFallback(
     accepted: null,
     summary: {
       overallLevel,
-      score,
+      score: null,
       deferredNodeIds: [],
       networkMode: "api-live",
       serialOpen: null,
       mqttConnected: null,
-      portStatus: "api-live",
-      spoolPending: 0,
-      rejectedMessages: 0,
-      lastPublishedAgeSeconds: maxTelemetryAge
+      portStatus: null,
+      spoolPending: null,
+      rejectedMessages: null,
+      lastPublishedAgeSeconds: freshestTelemetryAge
     },
     nodes,
     soak: null
@@ -1227,6 +1190,7 @@ export function SystemPage() {
     commandTypeDefaults: {}
   });
   const [policyHistory, setPolicyHistory] = useState<OperationLogRow[]>([]);
+  const [policyHistoryTotal, setPolicyHistoryTotal] = useState<number | null>(null);
   const [statusCheckedAt, setStatusCheckedAt] = useState<string | null>(null);
   const [historyDetail, setHistoryDetail] = useState<OperationLogRow | null>(null);
   const [newCommandType, setNewCommandType] = useState("");
@@ -1245,8 +1209,10 @@ export function SystemPage() {
       ]);
       if (statusResult.status === "fulfilled") {
         setStatus(statusResult.value);
+        setStatusCheckedAt(new Date().toISOString());
       } else {
         setStatus(null);
+        setStatusCheckedAt(null);
       }
 
       if (deviceListResult.status === "fulfilled") {
@@ -1273,9 +1239,6 @@ export function SystemPage() {
 
       if (!silent && statusResult.status === "rejected" && deviceListResult.status === "rejected" && fieldAlarmResult.status === "rejected") {
         message.error("系统状态与现场设备状态读取失败，请检查 API 服务连接。");
-      }
-      if (statusResult.status === "fulfilled" || deviceListResult.status === "fulfilled" || fieldAlarmResult.status === "fulfilled") {
-        setStatusCheckedAt(new Date().toISOString());
       }
     } finally {
       if (!silent) setLoading(false);
@@ -1306,6 +1269,7 @@ export function SystemPage() {
         endTime
       });
       setPolicyHistory(logs.list);
+      setPolicyHistoryTotal(logs.total);
     } finally {
       setPolicyHistoryLoading(false);
     }
@@ -1336,60 +1300,60 @@ export function SystemPage() {
   const serviceItems = useMemo(
     () =>
       status?.items ?? [
-        { key: "postgres", label: "PostgreSQL", status: "unknown" as const, detail: "-" },
-        { key: "clickhouse", label: "ClickHouse", status: "unknown" as const, detail: "-" },
-        { key: "kafka", label: "Kafka", status: "unknown" as const, detail: "-" }
+        { key: "postgres", label: "PostgreSQL", status: "unknown" as const, detail: "系统状态 API 未返回" },
+        { key: "clickhouse", label: "ClickHouse", status: "unknown" as const, detail: "系统状态 API 未返回" },
+        { key: "kafka", label: "Kafka", status: "unknown" as const, detail: "系统状态 API 未返回" }
       ],
     [status]
   );
 
   const rawFieldEdge = status?.fieldEdge ?? null;
   const usingLiveFallback = Boolean(liveFieldEdge) && (!rawFieldEdge || !rawFieldEdge.available || rawFieldEdge.nodes.length === 0);
-  const fieldEdge = usingLiveFallback ? liveFieldEdge : rawFieldEdge;
+  const selectedFieldEdge = usingLiveFallback ? liveFieldEdge : rawFieldEdge;
+  const fieldEdge =
+    selectedFieldEdge && !selectedFieldEdge.stale && (selectedFieldEdge.available || selectedFieldEdge.nodes.length > 0)
+      ? selectedFieldEdge
+      : null;
+  const fieldEdgeUnavailableDetail = selectedFieldEdge && !fieldEdge ? productStatusDetail(selectedFieldEdge.detail) : null;
 
   const serviceHealthyCount = useMemo(
     () => serviceItems.filter((item) => item.status === "healthy").length,
     [serviceItems]
   );
-  const serviceHealthPercent = serviceItems.length > 0 ? Math.round((serviceHealthyCount / serviceItems.length) * 100) : 0;
   const fieldEdgeLevel = fieldEdge?.summary?.overallLevel ?? null;
   const fieldEdgeScore = fieldEdge?.summary?.score ?? null;
+  const fieldEdgeCenterDerived = Boolean(
+    usingLiveFallback ||
+      fieldEdge?.currentBoundary === "center-derived-field-edge-status" ||
+      fieldEdge?.detail.includes("中心数据库实时推导")
+  );
+  const fieldEdgeReportedScore = fieldEdgeCenterDerived ? null : fieldEdgeScore;
   const fieldEdgeActiveNodes = useMemo(
     () => fieldEdge?.nodes.filter((node) => !node.deferred && node.enabled !== false) ?? [],
     [fieldEdge]
   );
   const fieldEdgeOnlineNodeCount = fieldEdgeActiveNodes.filter((node) => node.status.trim().toLowerCase() === "online").length;
   const fieldEdgeDeferredNodeCount = fieldEdge?.nodes.filter((node) => node.deferred || node.enabled === false).length ?? 0;
-  const centerNodeOnline =
-    Boolean(fieldAlarmStatus?.actuator.available) ||
-    Boolean(fieldEdge?.available && (fieldEdge.summary?.serialOpen || fieldEdge.summary?.mqttConnected));
-  const onlineDeviceCount = fieldEdgeOnlineNodeCount + (centerNodeOnline ? 1 : 0);
-  const activeDeviceCount = fieldEdgeActiveNodes.length + 1;
   const hermesEdge = status?.hermesEdge ?? null;
-  const hermesConfidencePercent = hermesEdge?.confidence == null ? null : Math.round(hermesEdge.confidence * 1000) / 10;
+  const hermesCurrent = hermesEdge?.available && !hermesEdge.stale ? hermesEdge : null;
+  const hermesConfidencePercent = hermesCurrent?.confidence == null ? null : Math.round(hermesCurrent.confidence * 1000) / 10;
   const hermesSafetyOk =
-    hermesEdge?.safetyGatewayCoreTouched === false &&
-    hermesEdge.safetySerialTouched === false &&
-    hermesEdge.safetyMqttTouched === false;
-  const fieldEdgeHealthPercent = fieldEdgeScore == null ? null : clampPercent(fieldEdgeScore);
-  const hermesHealthPercent =
-    hermesEdge == null
-      ? null
-      : hermesEdge.serviceActive && hermesEdge.modelLoaded
-        ? 100
-        : hermesEdge.serviceActive || hermesEdge.modelLoaded
-          ? 60
-          : 0;
-  const systemHealthParts = [serviceHealthPercent, fieldEdgeHealthPercent, hermesHealthPercent].filter(
-    (value): value is number => typeof value === "number"
-  );
-  const systemHealthPercent =
-    systemHealthParts.length > 0 ? Math.floor(systemHealthParts.reduce((sum, value) => sum + value, 0) / systemHealthParts.length) : 0;
-  const systemHealthNote = hermesHealthPercent == null ? "平台+边缘综合，AI 状态待接入" : "平台+边缘+AI 综合";
+    hermesCurrent?.safetyGatewayCoreTouched === false &&
+    hermesCurrent.safetySerialTouched === false &&
+    hermesCurrent.safetyMqttTouched === false;
   const systemHealthy =
+    serviceItems.length > 0 &&
     serviceHealthyCount === serviceItems.length &&
-    edgeLevelLabel(fieldEdgeLevel) === "健康" &&
-    (hermesHealthPercent == null || hermesHealthPercent >= 90);
+    fieldEdgeLevel === "healthy";
+
+  const hasNodeTrafficData = Boolean(
+    fieldEdge?.nodes.some(
+      (node) => node.telemetryMessages != null || node.commandForwards != null || node.ackPublishes != null
+    )
+  );
+  const hasNodeFreshnessData = Boolean(
+    fieldEdge?.nodes.some((node) => node.lastTelemetryAgeSeconds != null || node.lastAckAgeSeconds != null)
+  );
 
   const nodeTrafficOption = useMemo(() => {
     const nodes = fieldEdge?.nodes ?? [];
@@ -1474,65 +1438,6 @@ export function SystemPage() {
           lineStyle: { width: 2, color: "#34d399" },
           itemStyle: { color: "#34d399" },
           areaStyle: { color: "rgba(52, 211, 153, 0.08)" }
-        }
-      ]
-    };
-  }, [fieldEdge]);
-
-  const nodeQualityMatrixOption = useMemo(() => {
-    const nodes = fieldEdge?.nodes ?? [];
-    const dimensions = ["状态", "遥测时效", "转发闭环"];
-    const matrixData = nodes.flatMap((node, nodeIndex) => {
-      const telemetryFreshness = freshnessPercent(node.lastTelemetryAgeSeconds);
-      const forwardScore = forwardLoopPercent(node);
-      return [
-        [nodeIndex, 0, nodeQualityStatusPercent(node)],
-        [nodeIndex, 1, telemetryFreshness],
-        [nodeIndex, 2, forwardScore]
-      ];
-    });
-
-    return {
-      backgroundColor: "transparent",
-      tooltip: { show: false },
-      grid: { left: "4%", right: "4%", top: 24, bottom: 28, containLabel: true },
-      xAxis: {
-        type: "category",
-        data: nodes.map((node) => formatInstallLabelDisplay(node.installLabel, node.deviceId)),
-        splitArea: { show: true, areaStyle: { color: ["rgba(15, 23, 42, 0.08)", "rgba(15, 23, 42, 0.02)"] } },
-        ...darkAxis()
-      },
-      yAxis: {
-        type: "category",
-        data: dimensions,
-        splitArea: { show: true, areaStyle: { color: ["rgba(15, 23, 42, 0.08)", "rgba(15, 23, 42, 0.02)"] } },
-        ...darkAxis()
-      },
-      visualMap: {
-        min: 0,
-        max: 100,
-        calculable: false,
-        orient: "horizontal",
-        left: "center",
-        bottom: 0,
-        textStyle: { color: "rgba(226, 232, 240, 0.82)" },
-        inRange: { color: ["#7f1d1d", "#b45309", "#0f766e", "#22c55e"] }
-      },
-      series: [
-        {
-          type: "heatmap",
-          data: matrixData,
-          label: {
-            show: true,
-            color: "rgba(255,255,255,0.92)",
-            formatter: (params: { value: [number, number, number | null] }) => (params.value[2] == null ? "暂无" : `${params.value[2]}`)
-          },
-          emphasis: {
-            itemStyle: {
-              shadowBlur: 10,
-              shadowColor: "rgba(0, 0, 0, 0.35)"
-            }
-          }
         }
       ]
     };
@@ -1652,31 +1557,38 @@ export function SystemPage() {
         </div>
         <div className="system-page-hero-metrics">
           <div className="system-page-hero-metric">
-            <div className="system-page-hero-k">综合健康</div>
-            <div className="system-page-hero-v">{systemHealthPercent}%</div>
-            <div className="system-page-hero-note">{systemHealthNote}</div>
+            <div className="system-page-hero-k">平台服务</div>
+            <div className="system-page-hero-v">
+              {serviceHealthyCount}/{serviceItems.length}
+            </div>
+            <div className="system-page-hero-note">真实健康检查通过数</div>
           </div>
           <div className="system-page-hero-metric">
             <div className="system-page-hero-k">边缘链路</div>
             <div className="system-page-hero-v" style={{ color: edgeLevelColor(fieldEdgeLevel) }}>
               {edgeLevelLabel(fieldEdgeLevel)}
             </div>
-            <div className="system-page-hero-note">RK3568 链路评分 {formatMetric(fieldEdgeScore)}</div>
+            <div className="system-page-hero-note">
+              {fieldEdgeCenterDerived
+                ? "中心数据库实时推导"
+                : fieldEdgeReportedScore == null
+                  ? "RK3568 评分未上报"
+                  : `RK3568 上报评分 ${fieldEdgeReportedScore}`}
+            </div>
           </div>
           <div className="system-page-hero-metric">
-            <div className="system-page-hero-k">在线设备</div>
+            <div className="system-page-hero-k">分节点在线</div>
             <div className="system-page-hero-v">
-              {onlineDeviceCount}/{activeDeviceCount}
+              {fieldEdgeOnlineNodeCount}/{fieldEdgeActiveNodes.length}
             </div>
             <div className="system-page-hero-note">
-              RK3568 中心节点 {centerNodeOnline ? "在线" : "待确认"} · 分节点 {fieldEdgeOnlineNodeCount}/{fieldEdgeActiveNodes.length}
-              {fieldEdgeDeferredNodeCount > 0 ? ` · 预留 ${fieldEdgeDeferredNodeCount}` : ""}
+              仅统计正式分节点{fieldEdgeDeferredNodeCount > 0 ? ` · 预留 ${fieldEdgeDeferredNodeCount}` : ""}
             </div>
           </div>
           <div className="system-page-hero-metric">
             <div className="system-page-hero-k">Hermes Agent</div>
-            <div className="system-page-hero-v" style={{ color: hermesEdge?.modelLoaded ? "#22d3ee" : "#94a3b8" }}>
-              {hermesEdge?.modelLoaded ? "在线" : "待接入"}
+            <div className="system-page-hero-v" style={{ color: hermesCurrent?.modelLoaded ? "#22d3ee" : "#94a3b8" }}>
+              {hermesCurrent?.serviceActive && hermesCurrent.modelLoaded ? "已就绪" : hermesCurrent ? "未就绪" : "未接入"}
             </div>
             <div className="system-page-hero-note">
               {hermesConfidencePercent == null ? "等待模型诊断" : `置信度 ${hermesConfidencePercent}%`}
@@ -1684,8 +1596,8 @@ export function SystemPage() {
           </div>
           <div className="system-page-hero-metric">
             <div className="system-page-hero-k">策略记录</div>
-            <div className="system-page-hero-v">{policyHistory.length}</div>
-            <div className="system-page-hero-note">近 30 天变更</div>
+            <div className="system-page-hero-v">{formatMetric(policyHistoryTotal)}</div>
+            <div className="system-page-hero-note">API 返回的近 30 天总数</div>
           </div>
         </div>
       </section>
@@ -1694,11 +1606,11 @@ export function SystemPage() {
         title="Tongxiao RK2206 现场告警终端"
         extra={
           <Space size={8} wrap>
-            <Tag color={fieldAlarmStatus?.actuator.available ? "green" : "orange"}>
-              {fieldAlarmStatus?.actuator.available ? "执行器已连接" : "执行器待确认"}
+            <Tag color={fieldAlarmStatus == null ? "default" : fieldAlarmStatus.actuator.available ? "green" : "orange"}>
+              {fieldAlarmStatus == null ? "执行器状态未上报" : fieldAlarmStatus.actuator.available ? "执行器已连接" : "执行器待确认"}
             </Tag>
             <Tag color={fieldAlarmStatus?.active ? "red" : fieldAlarmStatus?.silenced ? "gold" : "default"}>
-              {fieldAlarmStatus?.active ? "报警中" : fieldAlarmStatus?.silenced ? "已停止" : "待命"}
+              {fieldAlarmStatus == null ? "运行状态未上报" : fieldAlarmStatus.active ? "报警中" : fieldAlarmStatus.silenced ? "已停止" : "待命"}
             </Tag>
           </Space>
         }
@@ -1706,10 +1618,17 @@ export function SystemPage() {
         <div className="system-page-field-alarm">
           <div className="system-page-field-alarm-main">
             <div className="system-page-field-alarm-title">
-              {fieldAlarmStatus?.active ? "服务器正在驱动现场告警终端" : "手动联调云端 -> Tongxiao RK2206 告警链路"}
+              {fieldAlarmStatus == null
+                ? "等待现场告警终端状态"
+                : fieldAlarmStatus.active
+                  ? "服务器正在驱动现场告警终端"
+                  : "手动联调云端 -> Tongxiao RK2206 告警链路"}
             </div>
             <div className="system-page-field-alarm-detail">
-              {fieldAlarmStatus?.actuator.detail ?? "通过中心 API 下发到 Tongxiao RK2206 的蜂鸣器、马达、RGB 与 LCD。"}
+              {fieldAlarmStatus?.actuator.detail ??
+                (fieldAlarmStatus
+                  ? "通过中心 API 下发到 Tongxiao RK2206 的蜂鸣器、马达、RGB 与 LCD。"
+                  : "当前尚未读取到现场告警终端 API 状态。")}
             </div>
             {fieldAlarmStatus?.actuator.lastActionAt ? (
               <div className="system-page-field-alarm-time">最近动作 {formatTimestamp(fieldAlarmStatus.actuator.lastActionAt)}</div>
@@ -1739,6 +1658,9 @@ export function SystemPage() {
       <div className="system-page-section-head">
         <div>
           <div className="system-page-section-title">平台服务</div>
+          <div className="system-page-section-desc">
+            {status?.note ?? "等待 API 返回平台服务健康检查；本区不推算 CPU、内存或磁盘占用。"}
+          </div>
         </div>
       </div>
 
@@ -1763,21 +1685,9 @@ export function SystemPage() {
                     <span>{serviceRoleLabel(item.key)}</span>
                     <span>{serviceScopeLabel(item.key)}</span>
                   </div>
-                  <div>
-                    <div className="system-page-meter-label">
-                      <span>健康度</span>
-                      <span>{healthPercent(item.status)}%</span>
-                    </div>
-                    <Progress
-                      percent={healthPercent(item.status)}
-                      showInfo={false}
-                      strokeColor={healthAccent(item.status)}
-                      trailColor="rgba(51, 65, 85, 0.45)"
-                    />
-                  </div>
                   <div className="system-page-service-evidence">
                     <span>最近检查 {formatTimestamp(statusCheckedAt)}</span>
-                    <span>API 健康检查</span>
+                    <span>数据源：系统状态 API</span>
                   </div>
                 </div>
               )}
@@ -1802,11 +1712,11 @@ export function SystemPage() {
             <Space size={8} wrap>
               {edgeLevelTag(fieldEdge.summary?.overallLevel)}
               {usingLiveFallback ? (
-                <Tag color="gold">API 实时退化视图</Tag>
-              ) : fieldEdge.stale ? (
-                <Tag color="orange">数据滞后</Tag>
+                <Tag color="gold">中心数据库实时推导</Tag>
+              ) : fieldEdgeCenterDerived ? (
+                <Tag color="gold">中心数据库推导</Tag>
               ) : (
-                <Tag color="cyan">RK3568 证据窗口</Tag>
+                <Tag color="cyan">RK3568 实时证据</Tag>
               )}
             </Space>
           ) : undefined
@@ -1823,25 +1733,22 @@ export function SystemPage() {
                   {edgeLevelLabel(fieldEdge.summary?.overallLevel)}
                 </div>
                 <div className="system-page-kpi-meta">
-                  <span>网络 {fieldEdge.summary?.networkMode ?? "-"}</span>
-                  <span>串口 {fieldEdge.summary?.portStatus ?? "-"}</span>
+                  <span>网络 {fieldEdge.summary?.networkMode ?? "未上报"}</span>
+                  <span>串口 {fieldEdge.summary?.portStatus ?? "未上报"}</span>
                 </div>
-                <Progress
-                  percent={edgeLevelPercent(fieldEdge.summary?.overallLevel)}
-                  showInfo={false}
-                  strokeColor={edgeLevelColor(fieldEdge.summary?.overallLevel)}
-                  trailColor="rgba(51, 65, 85, 0.45)"
-                />
+                <div className="system-page-kpi-note">离散运行状态，不折算百分比</div>
               </div>
 
               <div className="system-page-kpi">
-                <div className="system-page-kpi-label">链路评分</div>
-                <div className="system-page-kpi-value">{formatMetric(fieldEdge.summary?.score, "分")}</div>
+                <div className="system-page-kpi-label">RK3568 链路评分</div>
+                <div className="system-page-kpi-value">{formatMetric(fieldEdgeReportedScore, "分")}</div>
                 <div className="system-page-kpi-meta">
                   <span>串口打开 {boolLabel(fieldEdge.summary?.serialOpen)}</span>
                   <span>MQTT 已连 {boolLabel(fieldEdge.summary?.mqttConnected)}</span>
                 </div>
-                <div className="system-page-kpi-note">证据生成 {formatTimestamp(fieldEdge.generatedAt)}</div>
+                <div className="system-page-kpi-note">
+                  {fieldEdgeCenterDerived ? "中心推导视图不生成板端评分" : `证据生成 ${formatTimestamp(fieldEdge.generatedAt)}`}
+                </div>
               </div>
 
               <div className="system-page-kpi">
@@ -1858,7 +1765,7 @@ export function SystemPage() {
                 <div className="system-page-kpi-label">验收窗口</div>
                 <div className="system-page-kpi-value">{boolLabel(fieldEdge.soak?.accepted ?? fieldEdge.accepted)}</div>
                 <div className="system-page-kpi-meta">
-                  <span>边界 {fieldEdge.soak?.currentBoundary ?? fieldEdge.currentBoundary ?? "-"}</span>
+                  <span>边界 {fieldEdge.soak?.currentBoundary ?? fieldEdge.currentBoundary ?? "未上报"}</span>
                   <span>ACK 全闭环 {boolLabel(fieldEdge.soak?.allAcked)}</span>
                 </div>
                 <div className="system-page-kpi-note">清洁窗口 {formatMetric(fieldEdge.soak?.cleanWindowRounds)}</div>
@@ -1867,23 +1774,22 @@ export function SystemPage() {
 
             <div className="system-page-edge-detail">{productStatusDetail(fieldEdge.detail)}</div>
 
-            {hermesEdge ? (
+            {hermesCurrent ? (
               <div className="system-page-hermes-card">
                 <div className="system-page-hermes-head">
                   <div>
                     <div className="system-page-panel-title">Hermes 端侧智能体</div>
                     <div className="system-page-hermes-title">
-                      {modelJudgementLabel(hermesEdge.diagnosisType)}
+                      {modelJudgementLabel(hermesCurrent.diagnosisType)}
                     </div>
                     <div className="system-page-hermes-subtitle">
-                      {productStatusDetail(hermesEdge.detail)} · {formatTimestamp(hermesEdge.generatedAt)}
+                      {productStatusDetail(hermesCurrent.detail)} · {formatTimestamp(hermesCurrent.generatedAt)}
                     </div>
                   </div>
                   <Space size={8} wrap>
-                    {hermesDiagnosisTag(hermesEdge.diagnosisType, hermesEdge.confidenceLevel)}
-                    {hermesEdge.stale ? <Tag color="orange">证据过期</Tag> : null}
-                    <Tag color={hermesEdge.serviceActive ? "green" : "default"}>服务 {hermesEdge.serviceActive ? "运行中" : "待确认"}</Tag>
-                    <Tag color={hermesEdge.modelLoaded ? "cyan" : "default"}>模型 {hermesEdge.modelLoaded ? "已加载" : "未加载"}</Tag>
+                    {hermesDiagnosisTag(hermesCurrent.diagnosisType, hermesCurrent.confidenceLevel)}
+                    <Tag color={hermesCurrent.serviceActive ? "green" : "default"}>服务 {hermesCurrent.serviceActive ? "运行中" : "待确认"}</Tag>
+                    <Tag color={hermesCurrent.modelLoaded ? "cyan" : "default"}>模型 {hermesCurrent.modelLoaded ? "已加载" : "未加载"}</Tag>
                     <Tag color={hermesSafetyOk ? "green" : "orange"}>主链路保护 {hermesSafetyOk ? "通过" : "待确认"}</Tag>
                   </Space>
                 </div>
@@ -1891,80 +1797,75 @@ export function SystemPage() {
                 <div className="system-page-hermes-grid">
                   <div className="system-page-hermes-metric">
                     <span>模型</span>
-                    <strong>{hermesModelTypeLabel(hermesEdge.modelType)}</strong>
-                    <em>{hermesModelKeyLabel(hermesEdge.modelKey)}</em>
+                    <strong>{hermesModelTypeLabel(hermesCurrent.modelType)}</strong>
+                    <em>{hermesModelKeyLabel(hermesCurrent.modelKey)}</em>
                   </div>
                   <div className="system-page-hermes-metric">
                     <span>特征 / 模型数</span>
-                    <strong>{formatMetric(hermesEdge.featureCount)}</strong>
-                    <em>模型数 {formatMetric(hermesEdge.aiModelCount)}</em>
+                    <strong>{formatMetric(hermesCurrent.featureCount)}</strong>
+                    <em>模型数 {formatMetric(hermesCurrent.aiModelCount)}</em>
                   </div>
                   <div className="system-page-hermes-metric">
                     <span>置信度</span>
-                    <strong>{hermesConfidencePercent == null ? "-" : `${hermesConfidencePercent}%`}</strong>
-                    <em>{confidenceLevelLabel(hermesEdge.confidenceLevel)}</em>
+                    <strong>{hermesConfidencePercent == null ? "未上报" : `${hermesConfidencePercent}%`}</strong>
+                    <em>{confidenceLevelLabel(hermesCurrent.confidenceLevel)}</em>
                   </div>
                   <div className="system-page-hermes-metric">
                     <span>自然语言入口</span>
-                    <strong>{boolLabel(hermesEdge.naturalLanguageReady)}</strong>
-                    <em>意图数 {formatMetric(hermesEdge.intentCount)}</em>
+                    <strong>{boolLabel(hermesCurrent.naturalLanguageReady)}</strong>
+                    <em>意图数 {formatMetric(hermesCurrent.intentCount)}</em>
                   </div>
                   <div className="system-page-hermes-metric">
                     <span>安全复检</span>
-                    <strong>{actionStatusLabel(hermesEdge.actionRecheckStatus)}</strong>
-                    <em>复检接纳 {boolLabel(hermesEdge.actionRecheckAccepted)}</em>
+                    <strong>{actionStatusLabel(hermesCurrent.actionRecheckStatus)}</strong>
+                    <em>复检接纳 {boolLabel(hermesCurrent.actionRecheckAccepted)}</em>
                   </div>
                   <div className="system-page-hermes-metric">
-                    <span>压测</span>
-                    <strong>{formatMetric(hermesEdge.stress?.throughputRps, " rps")}</strong>
-                    <em>P95 {formatMetric(hermesEdge.stress?.p95Ms, "ms")} · 错误率 {formatMetric(hermesEdge.stress?.errorRate)}</em>
+                    <span>运行验收</span>
+                    <strong>{boolLabel(hermesCurrent.accepted)}</strong>
+                    <em>{hermesCurrent.currentBoundary ?? "运行边界未上报"}</em>
                   </div>
                 </div>
 
-                <HermesVolatilitySurfaceView surface={hermesEdge.volatilitySurface} stale={hermesEdge.stale} />
+                {hermesCurrent.volatilitySurface?.method.startsWith("derived_") ? (
+                  <div className="system-page-edge-detail">
+                    当前接口未提供实测时间序列，波动曲面不作为实时监控指标展示。
+                  </div>
+                ) : (
+                  <HermesVolatilitySurfaceView surface={hermesCurrent.volatilitySurface} stale={false} />
+                )}
 
                 <div className="system-page-hermes-boundary">
-                  <span>网关主流程触碰 {boolLabel(hermesEdge.safetyGatewayCoreTouched)}</span>
-                  <span>串口链路触碰 {boolLabel(hermesEdge.safetySerialTouched)}</span>
-                  <span>MQTT 链路触碰 {boolLabel(hermesEdge.safetyMqttTouched)}</span>
-                  <span>板端主机 {hermesEdge.boardHost ?? "-"}</span>
+                  <span>网关主流程触碰 {boolLabel(hermesCurrent.safetyGatewayCoreTouched)}</span>
+                  <span>串口链路触碰 {boolLabel(hermesCurrent.safetySerialTouched)}</span>
+                  <span>MQTT 链路触碰 {boolLabel(hermesCurrent.safetyMqttTouched)}</span>
+                  <span>板端主机 {hermesCurrent.boardHost ?? "未上报"}</span>
                 </div>
               </div>
             ) : (
-              <div className="system-page-edge-detail">当前 API 尚未返回 RK3568 Hermes Agent 状态。</div>
+              <div className="system-page-edge-detail">
+                {hermesEdge ? productStatusDetail(hermesEdge.detail) : "当前 API 尚未返回 RK3568 Hermes Agent 实时状态。"}
+              </div>
             )}
 
             <Row gutter={[16, 16]}>
-              <Col xs={24} xl={10}>
+              <Col xs={24} xl={12}>
                 <div className="system-page-panel">
-                  <div className="system-page-panel-title">节点通信计数</div>
-                  {fieldEdge.nodes.length > 0 ? (
+                  <div className="system-page-panel-title">节点累计通信计数</div>
+                  {hasNodeTrafficData ? (
                     <ReactECharts option={nodeTrafficOption} style={{ height: 320 }} />
                   ) : (
-                    <div className="system-page-empty">{usingLiveFallback ? "当前展示 API 实时节点统计。" : "暂无 RK3568 节点运行数据。"}</div>
+                    <div className="system-page-empty">当前数据源未上报节点累计遥测、命令转发或 ACK 计数。</div>
                   )}
                 </div>
               </Col>
-              <Col xs={24} xl={14}>
+              <Col xs={24} xl={12}>
                 <div className="system-page-panel">
-                  <div className="system-page-panel-title">节点质量矩阵</div>
-                  {fieldEdge.nodes.length > 0 ? (
-                    <ReactECharts option={nodeQualityMatrixOption} style={{ height: 320 }} />
+                  <div className="system-page-panel-title">节点遥测时效</div>
+                  {hasNodeFreshnessData ? (
+                    <ReactECharts option={nodeFreshnessOption} style={{ height: 320 }} />
                   ) : (
-                    <div className="system-page-empty">{usingLiveFallback ? "当前展示 API 实时节点质量矩阵。" : "暂无节点质量矩阵数据。"}</div>
-                  )}
-                </div>
-              </Col>
-            </Row>
-
-            <Row gutter={[16, 16]}>
-              <Col span={24}>
-                <div className="system-page-panel">
-                  <div className="system-page-panel-title">节点时效对比</div>
-                  {fieldEdge.nodes.length > 0 ? (
-                    <ReactECharts option={nodeFreshnessOption} style={{ height: 280 }} />
-                  ) : (
-                    <div className="system-page-empty">{usingLiveFallback ? "当前展示 API 实时节点新鲜度。" : "暂无节点新鲜度指标。"}</div>
+                    <div className="system-page-empty">当前数据源未上报最近遥测或最近 ACK 时效。</div>
                   )}
                 </div>
               </Col>
@@ -1972,43 +1873,31 @@ export function SystemPage() {
 
             <div className="system-page-node-grid">
               {fieldEdge.nodes.length > 0 ? (
-                fieldEdge.nodes.map((node) => {
-                  const statusPercent = nodeQualityStatusPercent(node);
-                  return (
-                    <div key={`${node.fieldNodeId}-${node.deviceId}`} className="system-page-node-card">
-                      <div className="system-page-node-head">
-                        <div>
-                          <div className="system-page-node-title">{formatInstallLabelDisplay(node.installLabel, node.deviceId)}</div>
-                          <div className="system-page-node-subtitle">{node.deviceId}</div>
-                        </div>
-                        {edgeNodeTag(node.status)}
+                fieldEdge.nodes.map((node) => (
+                  <div key={`${node.fieldNodeId}-${node.deviceId}`} className="system-page-node-card">
+                    <div className="system-page-node-head">
+                      <div>
+                        <div className="system-page-node-title">{formatInstallLabelDisplay(node.installLabel, node.deviceId)}</div>
+                        <div className="system-page-node-subtitle">{node.deviceId}</div>
                       </div>
-                      <div className="system-page-node-metrics">
-                        <div>
-                          <div className="system-page-meter-label">
-                            <span>节点状态</span>
-                            <span>{statusPercent == null ? "暂无" : `${statusPercent}%`}</span>
-                          </div>
-                          <Progress
-                            percent={statusPercent ?? 0}
-                            showInfo={false}
-                            strokeColor={statusPercent == null ? "#64748b" : "#22d3ee"}
-                            trailColor="rgba(51, 65, 85, 0.45)"
-                          />
-                        </div>
-                        <div className="system-page-node-summary">
-                          <span>遥测 {formatMetric(node.telemetryMessages)}</span>
-                          <span>转发 {formatMetric(node.commandForwards)}</span>
-                          <span>业务 ACK 发布 {formatMetric(node.ackPublishes)}</span>
-                        </div>
-                        <div className="system-page-node-summary">
-                          <span>最近遥测 {formatMetric(node.lastTelemetryAgeSeconds, "s")}</span>
-                          <span>最近ACK {formatMetric(node.lastAckAgeSeconds, "s")}</span>
-                        </div>
+                      {edgeNodeTag(node.status)}
+                    </div>
+                    <div className="system-page-node-metrics">
+                      <div className="system-page-node-summary">
+                        <span>累计遥测 {formatMetric(node.telemetryMessages)}</span>
+                        <span>累计转发 {formatMetric(node.commandForwards)}</span>
+                        <span>累计业务 ACK {formatMetric(node.ackPublishes)}</span>
+                      </div>
+                      <div className="system-page-node-summary">
+                        <span>最近遥测 {formatMetric(node.lastTelemetryAgeSeconds, "s")}</span>
+                        <span>最近 ACK {formatMetric(node.lastAckAgeSeconds, "s")}</span>
+                      </div>
+                      <div className="system-page-node-summary">
+                        <span>数据源 {fieldEdgeCenterDerived ? "中心数据库推导" : "RK3568 实时状态"}</span>
                       </div>
                     </div>
-                  );
-                })
+                  </div>
+                ))
               ) : (
                 <div className="system-page-empty">
                   {usingLiveFallback ? "当前暂无设备实时上报。" : "当前桌面端尚未拿到 RK3568 节点运行数据。"}
@@ -2017,7 +1906,9 @@ export function SystemPage() {
             </div>
           </div>
         ) : (
-          <div className="system-page-empty">当前桌面端尚未拿到 RK3568 fieldEdge 数据，也没有形成实时设备退化视图。</div>
+          <div className="system-page-empty">
+            {fieldEdgeUnavailableDetail ?? "当前尚未拿到 RK3568 实时状态，也没有可用的中心数据库节点状态。"}
+          </div>
         )}
       </BaseCard>
 
