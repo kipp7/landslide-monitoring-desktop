@@ -6,14 +6,12 @@ import * as THREE from "three";
 
 import type {
   CommandSuccessNotificationPolicyConfig,
-  CompetitionTiltProfile,
   Device,
   DeviceStateSnapshot,
   FieldEdgeStatus,
   FieldAlarmStatus,
   OperationLogRow,
-  SystemStatus,
-  TelemetrySeriesPoint
+  SystemStatus
 } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
@@ -278,7 +276,8 @@ function HermesVolatilityThreeSurface({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pendingSurfaceRef = useRef(incomingSurface);
   const interactionActiveRef = useRef(false);
-  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: 0.9 });
+  const initialCompactSurface = incomingSurface.horizonsMinutes.length <= 3 && incomingSurface.dimensions.length <= 3;
+  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: initialCompactSurface ? 0.95 : 0.9 });
   const [surface, setSurface] = useState(incomingSurface);
 
   useEffect(() => {
@@ -293,9 +292,11 @@ function HermesVolatilityThreeSurface({
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x050811, 0.042);
 
+    const compactSurface = surface.horizonsMinutes.length <= 3 && surface.dimensions.length <= 3;
+    const compactTargetY = Math.min(2.35, Math.max(1.25, (0.18 + (surface.peakScore ?? 0) * 0.021) * 0.38));
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-    camera.position.set(8.8, 6.45, 10.7);
-    camera.lookAt(0, 1.25, 0);
+    camera.position.set(compactSurface ? 6.9 : 8.8, compactSurface ? 5.35 : 6.45, compactSurface ? 8.3 : 10.7);
+    camera.lookAt(0, compactSurface ? compactTargetY : 1.25, 0);
     camera.zoom = viewStateRef.current.zoom;
     camera.updateProjectionMatrix();
 
@@ -323,7 +324,7 @@ function HermesVolatilityThreeSurface({
     scene.add(amberLight);
 
     const world = new THREE.Group();
-    world.scale.set(0.78, 0.82, 0.78);
+    world.scale.set(compactSurface ? 0.88 : 0.78, compactSurface ? 0.9 : 0.82, compactSurface ? 0.88 : 0.78);
     world.position.set(0.12, -0.04, 0);
     scene.add(world);
 
@@ -1043,13 +1044,6 @@ type RealtimeTiltRow = {
 };
 
 const TILT_AXES = ["x", "y", "z"] as const;
-const TILT_SENSOR_KEYS = ["tilt_x_deg", "tilt_y_deg", "tilt_z_deg"] as const;
-type TiltAxis = (typeof TILT_AXES)[number];
-type TiltSensorKey = (typeof TILT_SENSOR_KEYS)[number];
-type RealtimeTiltHistoryRow = {
-  deviceId: string;
-  series: Record<TiltSensorKey, TelemetrySeriesPoint[]>;
-};
 
 type RealtimeTiltSurfaceData = {
   surface: HermesVolatilitySurface;
@@ -1057,22 +1051,15 @@ type RealtimeTiltSurfaceData = {
   highDeg: number;
   criticalDeg: number;
   peak: RealtimeTiltRow;
-  mode: "timeline" | "snapshot";
-  sampleFrameCount: number;
-  sourcePointCount: number;
-  windowStartedAt: string | null;
 };
 
 function tiltDeviationToSurfaceScore(deviationDeg: number, criticalDeg: number): number {
   const thresholdRatio = (Math.abs(deviationDeg) / criticalDeg) * 100;
-  if (thresholdRatio <= 140) return thresholdRatio;
-  return Math.min(340, 140 + Math.log2(thresholdRatio / 140) * 38);
+  if (thresholdRatio <= 100) return thresholdRatio;
+  return Math.min(200, 100 + Math.log10(thresholdRatio / 100) * 50);
 }
 
-function buildRealtimeTiltSurface(
-  status: FieldAlarmStatus | null,
-  historyRows: RealtimeTiltHistoryRow[]
-): RealtimeTiltSurfaceData | null {
+function buildRealtimeTiltSurface(status: FieldAlarmStatus | null): RealtimeTiltSurfaceData | null {
   const profile = status?.competitionProfile;
   if (!profile?.enabled || !profile.live?.length || profile.thresholds.criticalDeg <= 0) return null;
 
@@ -1110,132 +1097,11 @@ function buildRealtimeTiltSurface(
     .filter((value): value is string => Boolean(value))
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? profile.updatedAt;
 
-  const baselineByDeviceId = new Map(profile.devices.map((device) => [device.deviceId, device.baseline]));
-  const historyByDeviceId = new Map(historyRows.map((row) => [row.deviceId, row.series]));
-  const channels = rows.flatMap((row) =>
-    TILT_AXES.map((axis, axisIndex) => {
-      const sensorKey = TILT_SENSOR_KEYS[axisIndex]!;
-      const capturedAt = Date.parse(profile.devices.find((device) => device.deviceId === row.deviceId)?.capturedAt ?? profile.capturedAt);
-      const series = [...(historyByDeviceId.get(row.deviceId)?.[sensorKey] ?? [])]
-        .filter((point) => !Number.isFinite(capturedAt) || Date.parse(point.ts) >= capturedAt)
-        .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-      return {
-        key: `${row.deviceId}:${axis}`,
-        label: `${row.label} · ${axis.toUpperCase()}`,
-        row,
-        axis,
-        series
-      };
-    })
-  );
-  const referenceChannel = channels.reduce(
-    (current, channel) => (channel.series.length < current.series.length ? channel : current),
-    channels[0]!
-  );
-  const cursorByChannel = new Map(channels.map((channel) => [channel.key, -1]));
-  const matchedFrames: Array<{
-    anchorTs: string;
-    samples: Map<string, TelemetrySeriesPoint>;
-  }> = [];
-  const matchToleranceMs = 2_500;
-
-  for (const referencePoint of referenceChannel.series) {
-    const referenceTs = Date.parse(referencePoint.ts);
-    if (!Number.isFinite(referenceTs)) continue;
-    const candidates: Array<{ channelKey: string; point: TelemetrySeriesPoint; pointIndex: number }> = [];
-
-    for (const channel of channels) {
-      const startIndex = (cursorByChannel.get(channel.key) ?? -1) + 1;
-      let nearest: { point: TelemetrySeriesPoint; pointIndex: number; distanceMs: number } | null = null;
-      for (let index = startIndex; index < channel.series.length; index += 1) {
-        const point = channel.series[index]!;
-        const pointTs = Date.parse(point.ts);
-        if (!Number.isFinite(pointTs)) continue;
-        const distanceMs = Math.abs(pointTs - referenceTs);
-        if (distanceMs <= matchToleranceMs && (!nearest || distanceMs < nearest.distanceMs)) {
-          nearest = { point, pointIndex: index, distanceMs };
-        }
-        if (pointTs > referenceTs + matchToleranceMs) break;
-      }
-      if (!nearest) break;
-      candidates.push({ channelKey: channel.key, point: nearest.point, pointIndex: nearest.pointIndex });
-    }
-
-    if (candidates.length !== channels.length) continue;
-    const samples = new Map<string, TelemetrySeriesPoint>();
-    for (const candidate of candidates) {
-      cursorByChannel.set(candidate.channelKey, candidate.pointIndex);
-      samples.set(candidate.channelKey, candidate.point);
-    }
-    matchedFrames.push({ anchorTs: referencePoint.ts, samples });
-  }
-
-  const alignedFrames = matchedFrames.slice(-20);
-  const sampleFrameCount = alignedFrames.length;
-
-  if (sampleFrameCount >= 2) {
-    const horizons = Array.from({ length: sampleFrameCount }, (_, index) => index);
-    let peakScore = 0;
-    let peakDimensionKey = channels[0]?.key ?? rows[0]!.deviceId;
-    let peakHorizonMinutes = 0;
-    const points = channels.flatMap((channel) => {
-      const baseline = baselineByDeviceId.get(channel.row.deviceId)?.[channel.axis] ?? 0;
-      return alignedFrames.map((frame, index) => {
-        const point = frame.samples.get(channel.key)!;
-        const score = tiltDeviationToSurfaceScore(point.value - baseline, criticalDeg);
-        if (score > peakScore) {
-          peakScore = score;
-          peakDimensionKey = channel.key;
-          peakHorizonMinutes = index;
-        }
-        return {
-          horizonMinutes: index,
-          dimensionKey: channel.key,
-          volatilityScore: score,
-          confidence: null,
-          diagnosisType: null,
-          driver: `${channel.label} 相对倾角基线偏移`
-        };
-      });
-    });
-    const timestamps = alignedFrames.flatMap((frame) => Array.from(frame.samples.values(), (point) => point.ts));
-    const sortedTimestamps = timestamps.sort((a, b) => Date.parse(a) - Date.parse(b));
-    const generatedAt = sortedTimestamps.at(-1) ?? newestUpdatedAt;
-
-    return {
-      rows,
-      highDeg: profile.thresholds.highDeg,
-      criticalDeg,
-      peak,
-      mode: "timeline",
-      sampleFrameCount,
-      sourcePointCount: points.length,
-      windowStartedAt: sortedTimestamps[0] ?? null,
-      surface: {
-        generatedAt,
-        surfaceType: "edge_health_volatility_surface",
-        method: "realtime_competition_tilt_timeline_v1",
-        horizonsMinutes: horizons,
-        dimensions: channels.map((channel) => ({ key: channel.key, label: channel.label, unit: "°" })),
-        points,
-        peakScore,
-        peakDimensionKey,
-        peakHorizonMinutes,
-        modelConfidence: null,
-        note: `最近 ${sampleFrameCount} 轮、${points.length} 个倾角历史点。`
-      }
-    };
-  }
-
   return {
     rows,
     highDeg: profile.thresholds.highDeg,
     criticalDeg,
     peak,
-    mode: "snapshot",
-    sampleFrameCount: 1,
-    sourcePointCount: snapshotPoints.length,
-    windowStartedAt: null,
     surface: {
       generatedAt: newestUpdatedAt,
       surfaceType: "edge_health_volatility_surface",
@@ -1247,7 +1113,7 @@ function buildRealtimeTiltSurface(
       peakDimensionKey: peak.deviceId,
       peakHorizonMinutes: TILT_AXES.indexOf(peak.maxAxis),
       modelConfidence: null,
-      note: "最近 60 秒历史点尚不足，当前回退为 A/B/C 的真实 X/Y/Z 快照；历史就绪后会自动切换为时序曲面。"
+      note: "A/B/C 当前 X/Y/Z 倾角偏移。"
     }
   };
 }
@@ -1268,40 +1134,28 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
   }
 
   const warningRatio = Math.min(100, (data.highDeg / data.criticalDeg) * 100);
-  const isTimeline = data.mode === "timeline";
   const summaryCards = [
     { label: "真实节点", value: `${data.rows.length}`, note: "来自现场告警实时状态" },
-    {
-      label: "真实采样点",
-      value: `${data.sourcePointCount}`,
-      note: isTimeline ? `${data.sampleFrameCount} 轮 × ${data.surface.dimensions.length} 通道` : "当前三轴快照"
-    },
     { label: "峰值偏移", value: `${data.peak.maxDeviationDeg.toFixed(2)}°`, note: `${data.peak.label} · ${data.peak.maxAxis.toUpperCase()} 轴` },
     { label: "高风险阈值", value: `${data.highDeg.toFixed(2)}°`, note: "达到后进入高风险" },
     { label: "严重风险阈值", value: `${data.criticalDeg.toFixed(2)}°`, note: "达到后进入严重风险" },
-    {
-      label: isTimeline ? "时序范围" : "最新姿态",
-      value: isTimeline ? `${formatTimestamp(data.windowStartedAt)} 起` : formatTimestamp(data.surface.generatedAt),
-      note: isTimeline ? `更新至 ${formatTimestamp(data.surface.generatedAt)}` : "A/B/C 最新有效时间"
-    }
+    { label: "最新姿态", value: formatTimestamp(data.surface.generatedAt), note: "A/B/C 最新有效时间" }
   ];
 
   return (
     <div className="system-page-volatility">
       <div className="system-page-volatility-head">
         <div>
-          <div className="system-page-panel-title">A/B/C 倾角时序 3D 曲面</div>
+          <div className="system-page-panel-title">A/B/C 当前倾角风险 3D 曲面</div>
           <div className="system-page-volatility-subtitle">
-            {isTimeline
-              ? "沿 X 看时间，沿 Y 找节点和倾角轴，沿 Z 看偏离基线的高度；全部来自 A/B/C 真实上报。"
-              : "历史点不足时显示当前快照：沿 X 找倾角轴，沿 Y 找节点，沿 Z 看偏离基线的高度。"}
+            X=倾角轴（X/Y/Z）· Y=节点（A/B/C）· Z=当前相对基线偏移。
           </div>
         </div>
         <Space size={8} wrap>
           <Tag color={data.peak.maxDeviationDeg >= data.criticalDeg ? "red" : data.peak.maxDeviationDeg >= data.highDeg ? "orange" : "cyan"}>
             峰值 {data.peak.maxDeviationDeg.toFixed(2)}°
           </Tag>
-          <Tag color={isTimeline ? "green" : "gold"}>{isTimeline ? "真实时序" : "实时快照"}</Tag>
+          <Tag color="green">当前姿态</Tag>
           <Tag color="blue">基线相对偏移</Tag>
         </Space>
       </div>
@@ -1322,22 +1176,22 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
             <HermesVolatilityThreeSurface
               surface={data.surface}
               presentation={{
-                captionTitle: isTimeline ? "最近 60 秒真实倾角时序" : "当前真实倾角快照",
+                captionTitle: "当前倾角风险曲面",
                 captionText: "",
-                xAxisLabel: isTimeline ? "X 采样时间（旧 → 新）" : "X 倾角轴（X / Y / Z）",
-                yAxisLabel: isTimeline ? "Y 分节点 × 倾角轴" : "Y 正式分节点（A / B / C）",
+                xAxisLabel: "X 倾角轴（X / Y / Z）",
+                yAxisLabel: "Y 分节点（A / B / C）",
                 zAxisLabel: "Z 相对基线偏移（°）",
-                legendLabels: [isTimeline ? "真实历史点" : "真实姿态点", "插值等值线", "告警阈值面"],
+                legendLabels: ["当前姿态点", "节点轴向连线", "告警阈值面"],
                 colorMode: "tilt-risk",
                 warningRatio
               }}
             />
           </div>
           <div className="system-page-surface-guide" aria-label="3D 曲面读图说明">
-            <div className="system-page-surface-guide-axis is-x"><b>X</b><span>采样时间</span><em>旧 → 新</em></div>
-            <div className="system-page-surface-guide-axis is-y"><b>Y</b><span>节点 × 倾角轴</span><em>A/B/C · X/Y/Z</em></div>
+            <div className="system-page-surface-guide-axis is-x"><b>X</b><span>倾角轴</span><em>X / Y / Z</em></div>
+            <div className="system-page-surface-guide-axis is-y"><b>Y</b><span>分节点</span><em>A / B / C</em></div>
             <div className="system-page-surface-guide-axis is-z"><b>Z</b><span>相对基线偏移</span><em>越高，偏移越大</em></div>
-            <p><strong>读图：</strong>先沿 Y 找到目标通道，再沿 X 看它最近 60 秒的变化，最后用 Z 高度和颜色判断风险等级。</p>
+            <p><strong>读图：</strong>找到“节点 + 倾角轴”的交点，再看该点的 Z 高度和颜色；例如 B 节点 Z 轴就是 Y=B、X=Z 的交点。</p>
           </div>
         </div>
 
@@ -1698,7 +1552,6 @@ export function SystemPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [liveFieldEdge, setLiveFieldEdge] = useState<FieldEdgeStatus | null>(null);
   const [fieldAlarmStatus, setFieldAlarmStatus] = useState<FieldAlarmStatus | null>(null);
-  const [tiltHistoryRows, setTiltHistoryRows] = useState<RealtimeTiltHistoryRow[]>([]);
   const [fieldAlarmBusy, setFieldAlarmBusy] = useState<"alarm_on" | "resolve" | null>(null);
   const [policyLoading, setPolicyLoading] = useState(true);
   const [policySaving, setPolicySaving] = useState(false);
@@ -1807,69 +1660,6 @@ export function SystemPage() {
     return () => window.clearInterval(timer);
   }, [autoRefresh, refreshStatus]);
 
-  const competitionProfile = fieldAlarmStatus?.competitionProfile ?? null;
-
-  useEffect(() => {
-    if (!competitionProfile?.enabled || !competitionProfile.devices.length) {
-      setTiltHistoryRows([]);
-      return undefined;
-    }
-
-    let cancelled = false;
-    let inFlight = false;
-    const refreshTiltHistory = async (profile: CompetitionTiltProfile) => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const endMs = Date.now();
-        const capturedAtMs = Date.parse(profile.capturedAt);
-        const startMs = Math.max(endMs - 60_000, Number.isFinite(capturedAtMs) ? capturedAtMs : 0);
-        if (startMs >= endMs) {
-          if (!cancelled) setTiltHistoryRows([]);
-          return;
-        }
-        const startTime = new Date(startMs).toISOString();
-        const endTime = new Date(endMs).toISOString();
-        const settled = await Promise.allSettled(
-          profile.devices.map(async (device) => {
-            const batch = await api.telemetry.getSeriesBatch({
-              deviceId: device.deviceId,
-              sensorKeys: [...TILT_SENSOR_KEYS],
-              startTime,
-              endTime,
-              interval: "raw"
-            });
-            return {
-              deviceId: device.deviceId,
-              series: {
-                tilt_x_deg: batch.tilt_x_deg ?? [],
-                tilt_y_deg: batch.tilt_y_deg ?? [],
-                tilt_z_deg: batch.tilt_z_deg ?? []
-              }
-            } satisfies RealtimeTiltHistoryRow;
-          })
-        );
-        if (cancelled) return;
-        const nextRows = settled
-          .filter((entry): entry is PromiseFulfilledResult<RealtimeTiltHistoryRow> => entry.status === "fulfilled")
-          .map((entry) => entry.value);
-        setTiltHistoryRows(nextRows);
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    void refreshTiltHistory(competitionProfile);
-    if (!autoRefresh) return () => { cancelled = true; };
-    const timer = window.setInterval(() => {
-      void refreshTiltHistory(competitionProfile);
-    }, 5_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [api, autoRefresh, competitionProfile]);
-
   const policyRows = useMemo<PolicyRow[]>(
     () =>
       Object.entries(policyDraft.commandTypeDefaults)
@@ -1928,10 +1718,7 @@ export function SystemPage() {
     typeof hermesCurrent.safetyMqttTouched === "boolean";
   const hermesActionRecheckReported =
     hermesCurrent?.actionRecheckStatus != null || hermesCurrent?.actionRecheckAccepted != null;
-  const realtimeTiltSurface = useMemo(
-    () => buildRealtimeTiltSurface(fieldAlarmStatus, tiltHistoryRows),
-    [fieldAlarmStatus, tiltHistoryRows]
-  );
+  const realtimeTiltSurface = useMemo(() => buildRealtimeTiltSurface(fieldAlarmStatus), [fieldAlarmStatus]);
   const systemHealthy =
     serviceItems.length > 0 &&
     serviceHealthyCount === serviceItems.length &&
