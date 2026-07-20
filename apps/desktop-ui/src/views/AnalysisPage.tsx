@@ -2285,14 +2285,7 @@ export function AnalysisPage() {
       backgroundColor: "transparent",
       textStyle: { color: "rgba(226, 232, 240, 0.9)" },
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, ...darkTooltip() },
-      legend: {
-        top: 2,
-        left: "center",
-        textStyle: { color: "rgba(226, 232, 240, 0.82)" },
-        itemWidth: 10,
-        itemHeight: 10
-      },
-      grid: { left: "8%", right: "6%", top: 28, bottom: 10, containLabel: true },
+      grid: { left: "8%", right: "6%", top: 8, bottom: 10, containLabel: true },
       xAxis: { type: "value", ...darkAxis() },
       yAxis: {
         type: "category",
@@ -3484,7 +3477,16 @@ export function AnalysisPage() {
                     </div>
                   </div>
                   <div className="desk-sensor-col">
-                    <ReactECharts option={sensorTypeOption} style={{ height: "100%" }} />
+                    <div className="desk-sensor-chart">
+                      <div className="desk-sensor-chart-legend" aria-label="传感器运行概览图例">
+                        <span><i className="is-total" />总数</span>
+                        <span><i className="is-abnormal" />异常 / 告警</span>
+                        <span><i className="is-review" />待复核</span>
+                      </div>
+                      <div className="desk-sensor-chart-canvas">
+                        <ReactECharts option={sensorTypeOption} style={{ height: "100%" }} />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </BaseCard>

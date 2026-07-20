@@ -1879,6 +1879,62 @@
   scrollbar-gutter: stable;
 }
 
+.desk-sensor-chart {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.desk-sensor-chart-legend {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 18px;
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.desk-sensor-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.desk-sensor-chart-legend i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 2px;
+}
+
+.desk-sensor-chart-legend .is-total { background: rgba(34, 211, 238, 0.72); }
+.desk-sensor-chart-legend .is-abnormal { background: rgba(239, 68, 68, 0.82); }
+.desk-sensor-chart-legend .is-review { background: rgba(251, 191, 36, 0.86); }
+
+.desk-sensor-chart-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@container (max-width: 170px) {
+  .desk-sensor-chart-legend {
+    gap: 5px;
+    font-size: 9px;
+  }
+
+  .desk-sensor-chart-legend span { gap: 3px; }
+  .desk-sensor-chart-legend i { width: 7px; height: 7px; }
+}
+
 .desk-sensor-item {
   display: flex;
   align-items: center;
