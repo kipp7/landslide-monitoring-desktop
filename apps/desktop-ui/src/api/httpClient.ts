@@ -1647,7 +1647,7 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           transport.withJson({
             method: "POST",
             body: JSON.stringify({
-              pointsCount: 20,
+              pointsCount: 50,
               lookbackDays: 30,
               latKey: "gps_latitude",
               lonKey: "gps_longitude",
