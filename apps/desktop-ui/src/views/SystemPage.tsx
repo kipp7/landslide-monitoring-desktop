@@ -280,7 +280,7 @@ function HermesVolatilityThreeSurface({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pendingSurfaceRef = useRef(incomingSurface);
   const interactionActiveRef = useRef(false);
-  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: 0.9 });
+  const viewStateRef = useRef({ yaw: -0.64, pitch: 0.2, zoom: 0.9, autoRotate: true });
   const [surface, setSurface] = useState(incomingSurface);
 
   useEffect(() => {
@@ -848,7 +848,8 @@ function HermesVolatilityThreeSurface({
       viewStateRef.current = {
         yaw: targetYaw,
         pitch: targetPitch,
-        zoom: camera.zoom
+        zoom: camera.zoom,
+        autoRotate: viewStateRef.current.autoRotate
       };
     };
     const applyPendingSurface = () => {
@@ -863,6 +864,8 @@ function HermesVolatilityThreeSurface({
     const handlePointerDown = (event: PointerEvent) => {
       isDragging = true;
       interactionActiveRef.current = true;
+      viewStateRef.current.autoRotate = false;
+      targetYaw = currentYaw;
       window.clearTimeout(wheelReleaseTimer);
       lastPointerX = event.clientX;
       lastPointerY = event.clientY;
@@ -908,6 +911,7 @@ function HermesVolatilityThreeSurface({
     let animationFrameId = 0;
     const animate = () => {
       if (disposed) return;
+      if (!isDragging && viewStateRef.current.autoRotate) targetYaw += 0.00012;
       currentYaw += (targetYaw - currentYaw) * 0.08;
       currentPitch += (targetPitch - currentPitch) * 0.08;
       world.rotation.set(currentPitch, currentYaw, 0);
