@@ -29,6 +29,15 @@ type AnomalyRow = {
   time: string;
 };
 
+type AnomalyKind = "availability" | "tilt" | "soil" | "conductivity" | "gnss" | "battery" | "device";
+
+type AnomalyAnalysis = {
+  isAnomaly: boolean;
+  level: AnomalyRow["level"];
+  kind: AnomalyKind;
+  message: string;
+};
+
 type CompetitionThresholdForm = {
   highDeg: number;
   criticalDeg: number;
@@ -538,39 +547,56 @@ function buildChartGroups(stations: Station[], level: AnalysisChartGroupLevel): 
   return Array.from(buckets.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function analyzeAnomaly(row: LiveSnapshotRow): { isAnomaly: boolean; level: AnomalyRow["level"]; message: string } {
+function analyzeAnomaly(row: LiveSnapshotRow): AnomalyAnalysis {
   const batteryPct = row.batteryPct;
   const tiltX = row.tiltXDeg;
   const tiltY = row.tiltYDeg;
   const staleMinutes = dayjs().diff(dayjs(row.updatedAt), "minute");
 
   if (row.device.status === "offline") {
-    return { isAnomaly: true, level: "critical", message: "离线：无数据上报" };
+    return { isAnomaly: true, level: "critical", kind: "availability", message: "离线：无数据上报" };
   }
   if (staleMinutes > 30) {
-    return { isAnomaly: true, level: "warn", message: `数据超时：${String(staleMinutes)} 分钟未更新` };
+    return {
+      isAnomaly: true,
+      level: "warn",
+      kind: "availability",
+      message: `数据超时：${String(staleMinutes)} 分钟未更新`
+    };
   }
   if (row.warningFlag) {
     return {
       isAnomaly: true,
       level: "warn",
+      kind: "tilt",
       message: `已触发预警，倾角 ${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`
     };
   }
   if (row.device.status === "warning") {
-    return { isAnomaly: true, level: "warn", message: "设备状态为预警，需复核现场链路与测值" };
+    return {
+      isAnomaly: true,
+      level: "warn",
+      kind: "device",
+      message: "设备状态为预警，需复核现场链路与测值"
+    };
   }
   if (batteryPct != null && batteryPct <= 20) {
-    return { isAnomaly: true, level: "warn", message: `低电量：battery_pct=${batteryPct.toFixed(0)}%` };
+    return {
+      isAnomaly: true,
+      level: "warn",
+      kind: "battery",
+      message: `低电量：battery_pct=${batteryPct.toFixed(0)}%`
+    };
   }
   if ((tiltX != null && Math.abs(tiltX) >= 120) || (tiltY != null && Math.abs(tiltY) >= 90)) {
     return {
       isAnomaly: true,
       level: "warn",
+      kind: "tilt",
       message: `姿态异常：tilt_x/tilt_y=${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`
     };
   }
-  return { isAnomaly: false, level: "info", message: "状态正常" };
+  return { isAnomaly: false, level: "info", kind: "device", message: "状态正常" };
 }
 
 function buildTimeBuckets(count: number, unit: TelemetryBucketUnit, labelFormat: string): TimeBucketValue[] {
@@ -2127,31 +2153,48 @@ export function AnalysisPage() {
   const warningFlagCount = useMemo(() => liveSnapshotRows.filter((row) => row.warningFlag).length, [liveSnapshotRows]);
 
   const sensorTypeOption = useMemo(() => {
-    const abnormalIds = new Set(anomalyDetails.map((entry) => entry.row.device.id));
-    const categories: Array<{ label: string; matches: (device: Device) => boolean }> = [
+    type SensorOverviewKind = "soil" | "tilt" | "conductivity" | "gnss";
+    const anomalyKindsByDevice = new Map<string, Set<AnomalyKind>>();
+    for (const entry of anomalyDetails) {
+      const kinds = anomalyKindsByDevice.get(entry.row.device.id) ?? new Set<AnomalyKind>();
+      kinds.add(entry.analysis.kind);
+      anomalyKindsByDevice.set(entry.row.device.id, kinds);
+    }
+    const activeTiltAlertIds = new Set(
+      (fieldAlarmStatus?.alerts ?? [])
+        .filter((alert) => alert.status === "active" || alert.status === "acked")
+        .map((alert) => alert.deviceId)
+        .filter((deviceId): deviceId is string => Boolean(deviceId))
+    );
+    const categories: Array<{
+      key: SensorOverviewKind;
+      label: string;
+      matches: (device: Device) => boolean;
+    }> = [
       {
+        key: "soil",
         label: "土壤温湿度",
         matches: (device) => isSoilSensorDevice(device, deviceStates[device.id])
       },
       {
+        key: "tilt",
         label: "倾角",
         matches: (device) => isTiltSensorDevice(device, deviceStates[device.id])
       },
       {
+        key: "conductivity",
         label: "土壤电导率",
         matches: (device) =>
           readMetricNumber(deviceStates[device.id]?.metrics, "electrical_conductivity_us_cm") != null
       },
       {
+        key: "gnss",
         label: "GNSS",
         matches: (device) => {
           const metrics = deviceStates[device.id]?.metrics;
-          return (
-            readMetricNumber(metrics, "gps_latitude") != null ||
-            readMetricNumber(metrics, "gps_longitude") != null ||
-            readMetricNumber(metrics, "latitude") != null ||
-            readMetricNumber(metrics, "longitude") != null
-          );
+          const latitude = readMetricNumber(metrics, "gps_latitude") ?? readMetricNumber(metrics, "latitude");
+          const longitude = readMetricNumber(metrics, "gps_longitude") ?? readMetricNumber(metrics, "longitude");
+          return isValidGpsCoordinatePair(latitude, longitude);
         }
       }
     ];
@@ -2161,7 +2204,12 @@ export function AnalysisPage() {
         return {
           label: category.label,
           total: matched.length,
-          abnormal: matched.filter((device) => abnormalIds.has(device.id)).length
+          abnormal: matched.filter((device) => {
+            const kinds = anomalyKindsByDevice.get(device.id);
+            if (kinds?.has("availability")) return true;
+            if (category.key === "tilt" && activeTiltAlertIds.has(device.id)) return true;
+            return kinds?.has(category.key) ?? false;
+          }).length
         };
       })
       .filter((item) => item.total > 0);
@@ -2202,7 +2250,7 @@ export function AnalysisPage() {
         }
       ]
     };
-  }, [anomalyDetails, deviceStates, visibleDevices]);
+  }, [anomalyDetails, deviceStates, fieldAlarmStatus?.alerts, visibleDevices]);
 
   const freshSoilReadings = useMemo(() => {
     return freshSnapshotRows
