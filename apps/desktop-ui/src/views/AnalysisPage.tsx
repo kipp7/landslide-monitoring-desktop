@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { HistoryOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Input, InputNumber, Modal, Select, Switch, Tag } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
@@ -8,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 import type {
   AlertLifecycleEvent,
   AlertSeverity,
+  AlertSummaryItem,
   CompetitionTiltVector,
   Device,
   DeviceStateSnapshot,
@@ -55,6 +57,15 @@ type CompetitionThresholdForm = {
   updateStepDeg: number;
 };
 
+type ReviewConclusion = "confirmed_risk" | "environmental_disturbance" | "device_issue" | "false_positive";
+
+type ReviewArchiveItem = {
+  alert: AlertSummaryItem;
+  resolvedAt: string;
+  note: string;
+  eventCount: number;
+};
+
 const DEFAULT_COMPETITION_THRESHOLDS: CompetitionThresholdForm = {
   highDeg: 3,
   criticalDeg: 7,
@@ -63,6 +74,25 @@ const DEFAULT_COMPETITION_THRESHOLDS: CompetitionThresholdForm = {
   recoveryPoints: 2,
   updateStepDeg: 0.25,
 };
+
+const REVIEW_CONCLUSION_OPTIONS: Array<{ value: ReviewConclusion; label: string }> = [
+  { value: "confirmed_risk", label: "确认风险事件" },
+  { value: "environmental_disturbance", label: "现场扰动" },
+  { value: "device_issue", label: "设备或安装问题" },
+  { value: "false_positive", label: "误报" },
+];
+
+function lifecycleEventLabel(eventType: AlertLifecycleEvent["eventType"]): string {
+  if (eventType === "ALERT_TRIGGER") return "告警触发";
+  if (eventType === "ALERT_UPDATE") return "等级更新";
+  if (eventType === "ALERT_ACK") return "进入复核";
+  return "复核归档";
+}
+
+function lifecycleEventNote(event: AlertLifecycleEvent): string {
+  const evidence = asRecord(event.evidence);
+  return typeof evidence.notes === "string" && evidence.notes.trim() ? evidence.notes.trim() : "未填写备注";
+}
 
 function darkAxis() {
   return {
@@ -578,7 +608,7 @@ function buildChartGroups(stations: Station[], level: AnalysisChartGroupLevel): 
   return Array.from(buckets.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function analyzeAnomaly(row: LiveSnapshotRow): AnomalyAnalysis {
+function analyzeAnomaly(row: LiveSnapshotRow, activeTiltAlert?: AlertSummaryItem): AnomalyAnalysis {
   const batteryPct = row.batteryPct;
   const tiltX = row.tiltXDeg;
   const tiltY = row.tiltYDeg;
@@ -595,12 +625,12 @@ function analyzeAnomaly(row: LiveSnapshotRow): AnomalyAnalysis {
       message: `数据超时：${String(staleMinutes)} 分钟未更新`
     };
   }
-  if (row.warningFlag) {
+  if (activeTiltAlert) {
     return {
       isAnomaly: true,
-      level: "warn",
+      level: activeTiltAlert.severity === "critical" ? "critical" : "warn",
       kind: "tilt",
-      message: `已触发预警，倾角 ${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`
+      message: `${alertSeverityLabel(activeTiltAlert.severity)}：${activeTiltAlert.title || `相对基线倾角 ${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`}`
     };
   }
   if (row.device.status === "warning") {
@@ -617,14 +647,6 @@ function analyzeAnomaly(row: LiveSnapshotRow): AnomalyAnalysis {
       level: "warn",
       kind: "battery",
       message: `低电量：battery_pct=${batteryPct.toFixed(0)}%`
-    };
-  }
-  if ((tiltX != null && Math.abs(tiltX) >= 120) || (tiltY != null && Math.abs(tiltY) >= 90)) {
-    return {
-      isAnomaly: true,
-      level: "warn",
-      kind: "tilt",
-      message: `姿态异常：tilt_x/tilt_y=${tiltX?.toFixed(2) ?? "--"}/${tiltY?.toFixed(2) ?? "--"}°`
     };
   }
   return { isAnomaly: false, level: "info", kind: "device", message: "状态正常" };
@@ -826,10 +848,15 @@ export function AnalysisPage() {
   const applyFieldAlarmActionResult = useFieldAlarmStore((state) => state.applyActionResult);
   const [trendRefreshSeq, setTrendRefreshSeq] = useState(0);
   const [fieldAlarmReviewOpen, setFieldAlarmReviewOpen] = useState(false);
-  const [fieldAlarmReviewNote, setFieldAlarmReviewNote] = useState("现场复核确认，解除声光报警。");
+  const [fieldAlarmReviewNote, setFieldAlarmReviewNote] = useState("现场已确认，进入人工复核。");
+  const [fieldAlarmReviewConclusion, setFieldAlarmReviewConclusion] = useState<ReviewConclusion>("confirmed_risk");
   const [fieldAlarmReviewSubmitting, setFieldAlarmReviewSubmitting] = useState(false);
   const [fieldAlarmReviewError, setFieldAlarmReviewError] = useState("");
   const [fieldAlarmEvents, setFieldAlarmEvents] = useState<AlertLifecycleEvent[]>([]);
+  const [reviewArchiveOpen, setReviewArchiveOpen] = useState(false);
+  const [reviewArchiveLoading, setReviewArchiveLoading] = useState(false);
+  const [reviewArchiveError, setReviewArchiveError] = useState("");
+  const [reviewArchiveItems, setReviewArchiveItems] = useState<ReviewArchiveItem[]>([]);
   const [competitionSetupOpen, setCompetitionSetupOpen] = useState(false);
   const [competitionCaptureBusy, setCompetitionCaptureBusy] = useState(false);
   const [competitionCaptureError, setCompetitionCaptureError] = useState("");
@@ -2091,8 +2118,16 @@ export function AnalysisPage() {
     };
   }, [liveSnapshotRows, now]);
 
+  const activeTiltAlertByDevice = useMemo(() => {
+    const result = new Map<string, AlertSummaryItem>();
+    for (const alert of fieldAlarmStatus?.alerts ?? []) {
+      if (alert.status === "active" && alert.deviceId) result.set(alert.deviceId, alert);
+    }
+    return result;
+  }, [fieldAlarmStatus?.alerts]);
+
   const riskDistributionOption = useMemo(() => {
-    const riskRows = liveSnapshotRows.map((row) => analyzeAnomaly(row));
+    const riskRows = liveSnapshotRows.map((row) => analyzeAnomaly(row, activeTiltAlertByDevice.get(row.device.id)));
     const high = riskRows.filter((analysis) => analysis.level === "critical").length;
     const mid = riskRows.filter((analysis) => analysis.level === "warn").length;
     const low = riskRows.filter((analysis) => analysis.level === "info").length;
@@ -2133,14 +2168,14 @@ export function AnalysisPage() {
         }
       ]
     };
-  }, [liveSnapshotRows]);
+  }, [activeTiltAlertByDevice, liveSnapshotRows]);
 
   const anomalyDetails = useMemo(
     () =>
       liveSnapshotRows
-        .map((row) => ({ row, analysis: analyzeAnomaly(row) }))
+        .map((row) => ({ row, analysis: analyzeAnomaly(row, activeTiltAlertByDevice.get(row.device.id)) }))
         .filter((entry) => entry.analysis.isAnomaly),
-    [liveSnapshotRows]
+    [activeTiltAlertByDevice, liveSnapshotRows]
   );
 
   const anomalies: AnomalyRow[] = useMemo(() => {
@@ -2182,7 +2217,8 @@ export function AnalysisPage() {
     () => freshSnapshotRows.filter((row) => row.tiltXDeg != null || row.tiltYDeg != null).length,
     [freshSnapshotRows]
   );
-  const warningFlagCount = useMemo(() => liveSnapshotRows.filter((row) => row.warningFlag).length, [liveSnapshotRows]);
+  const activeTiltAlertCount = fieldAlarmStatus?.activeCount ?? 0;
+  const pendingTiltReviewCount = fieldAlarmStatus?.ackedCount ?? 0;
 
   const sensorTypeOption = useMemo(() => {
     type SensorOverviewKind = "soil" | "tilt" | "conductivity" | "gnss";
@@ -2194,7 +2230,13 @@ export function AnalysisPage() {
     }
     const activeTiltAlertIds = new Set(
       (fieldAlarmStatus?.alerts ?? [])
-        .filter((alert) => alert.status === "active" || alert.status === "acked")
+        .filter((alert) => alert.status === "active")
+        .map((alert) => alert.deviceId)
+        .filter((deviceId): deviceId is string => Boolean(deviceId))
+    );
+    const pendingTiltReviewIds = new Set(
+      (fieldAlarmStatus?.alerts ?? [])
+        .filter((alert) => alert.status === "acked")
         .map((alert) => alert.deviceId)
         .filter((deviceId): deviceId is string => Boolean(deviceId))
     );
@@ -2241,7 +2283,10 @@ export function AnalysisPage() {
             if (kinds?.has("availability")) return true;
             if (category.key === "tilt" && activeTiltAlertIds.has(device.id)) return true;
             return kinds?.has(category.key) ?? false;
-          }).length
+          }).length,
+          pendingReview: category.key === "tilt"
+            ? matched.filter((device) => pendingTiltReviewIds.has(device.id)).length
+            : 0
         };
       })
       .filter((item) => item.total > 0);
@@ -2274,10 +2319,17 @@ export function AnalysisPage() {
           barWidth: 12
         },
         {
-          name: "异常",
+          name: "异常 / 告警",
           type: "bar",
           data: items.map((item) => item.abnormal),
           itemStyle: { color: "rgba(239, 68, 68, 0.82)" },
+          barWidth: 12
+        },
+        {
+          name: "待复核",
+          type: "bar",
+          data: items.map((item) => item.pendingReview),
+          itemStyle: { color: "rgba(251, 191, 36, 0.86)" },
           barWidth: 12
         }
       ]
@@ -2378,6 +2430,58 @@ export function AnalysisPage() {
       cancelled = true;
     };
   }, [api, fieldAlarmAlertId, fieldAlarmReviewOpen]);
+
+  useEffect(() => {
+    if (!reviewArchiveOpen) return;
+    let cancelled = false;
+    const ruleId = fieldAlarmStatus?.competitionProfile?.ruleId;
+    setReviewArchiveLoading(true);
+    setReviewArchiveError("");
+    void api.alerts
+      .list({ page: 1, pageSize: 50, status: "resolved" })
+      .then(async (result) => {
+        const resolvedAlerts = result.list
+          .filter((alert) => !ruleId || alert.ruleId === ruleId)
+          .slice(0, 20);
+        const items = await Promise.all(
+          resolvedAlerts.map(async (alert): Promise<ReviewArchiveItem> => {
+            try {
+              const detail = await api.alerts.getEvents(alert.alertId);
+              const resolveEvent = detail.events
+                .filter((event) => event.eventType === "ALERT_RESOLVE")
+                .slice()
+                .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+              return {
+                alert,
+                resolvedAt: resolveEvent?.createdAt ?? alert.lastEventAt,
+                note: resolveEvent ? lifecycleEventNote(resolveEvent) : "未填写复核结论",
+                eventCount: detail.events.length,
+              };
+            } catch {
+              return {
+                alert,
+                resolvedAt: alert.lastEventAt,
+                note: "复核事件读取失败",
+                eventCount: 0,
+              };
+            }
+          })
+        );
+        if (!cancelled) setReviewArchiveItems(items);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setReviewArchiveItems([]);
+          setReviewArchiveError(error instanceof Error ? error.message : "复核档案读取失败");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReviewArchiveLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, fieldAlarmStatus?.competitionProfile?.ruleId, reviewArchiveOpen]);
 
   const fieldAlarmReviewData = useMemo(() => {
     const alert = fieldAlarmStatus?.latestAlert ?? null;
@@ -2488,9 +2592,11 @@ export function AnalysisPage() {
     setFieldAlarmReviewSubmitting(true);
     setFieldAlarmReviewError("");
     try {
+      const conclusionLabel = REVIEW_CONCLUSION_OPTIONS.find((option) => option.value === fieldAlarmReviewConclusion)?.label ?? "已复核";
+      const reviewNote = fieldAlarmReviewNote.trim() || "现场复核已完成。";
       const result = await api.fieldAlarm.sendAction({
         action: "resolve",
-        reason: fieldAlarmReviewNote.trim() || "现场复核确认，解除声光报警。",
+        reason: `[复核结论：${conclusionLabel}] ${reviewNote}`,
         ...(fieldAlarmAlertId ? { alertId: fieldAlarmAlertId } : {})
       });
       if (!result.accepted) throw new Error(result.actuator.lastError ?? "现场告警终端未接受解除命令");
@@ -2499,7 +2605,7 @@ export function AnalysisPage() {
       void refreshFieldAlarmStatus();
       const thresholds = fieldAlarmStatus?.competitionProfile?.thresholds ?? DEFAULT_COMPETITION_THRESHOLDS;
       message.success(
-        `告警已解除。回到倾角基线 ${String(thresholds.recoveryDeg)}° 内连续 ${String(thresholds.recoveryPoints)} 个点后自动重新布防；也可以重新采集基线。`,
+        `复核已完成并归档，现场警报已解除。回到倾角基线 ${String(thresholds.recoveryDeg)}° 内连续 ${String(thresholds.recoveryPoints)} 个点后自动重新布防；也可以重新采集基线。`,
         6
       );
     } catch (err) {
@@ -2507,7 +2613,7 @@ export function AnalysisPage() {
     } finally {
       setFieldAlarmReviewSubmitting(false);
     }
-  }, [api, applyFieldAlarmActionResult, fieldAlarmAlertId, fieldAlarmReviewNote, fieldAlarmStatus?.competitionProfile?.thresholds, message, refreshFieldAlarmStatus]);
+  }, [api, applyFieldAlarmActionResult, fieldAlarmAlertId, fieldAlarmReviewConclusion, fieldAlarmReviewNote, fieldAlarmStatus?.competitionProfile?.thresholds, message, refreshFieldAlarmStatus]);
 
   const selectedStations = useMemo(() => {
     if (!selectedStationIds.length) return [];
@@ -2689,6 +2795,14 @@ export function AnalysisPage() {
             >
               {fieldAlarmStatus?.competitionProfile ? "重采倾角基线" : "采集倾角基线"}
             </Button>
+            <Button
+              size="small"
+              className="desk-analysis-baseline-button"
+              icon={<HistoryOutlined />}
+              onClick={() => setReviewArchiveOpen(true)}
+            >
+              复核档案
+            </Button>
             <span className="desk-analysis-meta-muted">更新 {lastUpdate || "—"}</span>
           </div>
         </div>
@@ -2761,7 +2875,7 @@ export function AnalysisPage() {
               void acknowledgeFieldAlarm();
             }}
           >
-            先静音，继续复核
+            确认并进入复核
           </Button>,
           <Button
             key="resolve"
@@ -2772,7 +2886,7 @@ export function AnalysisPage() {
               void resolveFieldAlarm();
             }}
           >
-            确认复核并解除警报
+            完成复核并归档
           </Button>
         ]}
       >
@@ -2861,6 +2975,39 @@ export function AnalysisPage() {
               <strong>{fieldAlarmReviewData.eventCount > 0 ? `${fieldAlarmReviewData.eventCount} 条` : "读取中"}</strong>
             </div>
           </div>
+          {fieldAlarmEvents.length ? (
+            <div className="desk-analysis-review-lifecycle">
+              <div className="desk-analysis-review-section-head">
+                <strong>当前告警生命周期</strong>
+                <span>{fieldAlarmEvents.length} 条真实事件</span>
+              </div>
+              <div className="desk-analysis-review-lifecycle-list">
+                {fieldAlarmEvents
+                  .slice()
+                  .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+                  .map((event) => (
+                    <div key={event.eventId} className="desk-analysis-review-lifecycle-item">
+                      <i className={`is-${event.eventType.toLowerCase().replace("alert_", "")}`} />
+                      <div>
+                        <strong>{lifecycleEventLabel(event.eventType)}</strong>
+                        <span>{formatBeijingDateTime(event.createdAt)}</span>
+                        {event.eventType === "ALERT_ACK" || event.eventType === "ALERT_RESOLVE" ? (
+                          <p>{lifecycleEventNote(event)}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+          <label className="desk-analysis-review-conclusion">
+            <span>复核结论（完成归档时写入）</span>
+            <Select
+              value={fieldAlarmReviewConclusion}
+              onChange={(value: ReviewConclusion) => setFieldAlarmReviewConclusion(value)}
+              options={REVIEW_CONCLUSION_OPTIONS}
+            />
+          </label>
           <label className="desk-analysis-review-note">
             <span>复核记录</span>
             <Input.TextArea
@@ -2872,9 +3019,63 @@ export function AnalysisPage() {
             />
           </label>
           <div className="desk-analysis-review-hint">
-            解除后需回到倾角基线 {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}° 内并保持 {String(fieldAlarmReviewData.thresholds.recoveryPoints)} 个上报点，规则才会自动重新布防。复核操作会写入告警生命周期和操作日志。
+            “进入复核”只静音并保留待办；“完成复核并归档”会解除警报并保存结论。规则等级始终由真实相对偏移计算，人工复核不会覆盖或降低测值等级。解除后需回到倾角基线 {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}° 内并保持 {String(fieldAlarmReviewData.thresholds.recoveryPoints)} 个上报点，规则才会自动重新布防。
           </div>
           {fieldAlarmReviewError ? <div className="desk-analysis-review-error">{fieldAlarmReviewError}</div> : null}
+        </div>
+      </Modal>
+
+      <Modal
+        centered
+        className="desk-analysis-review-modal desk-analysis-review-archive-modal"
+        open={reviewArchiveOpen}
+        title="倾角复核档案"
+        width={860}
+        footer={null}
+        onCancel={() => setReviewArchiveOpen(false)}
+      >
+        <div className="desk-analysis-review-archive">
+          <div className="desk-analysis-review-archive-summary">
+            <div>
+              <span>已归档</span>
+              <strong>{reviewArchiveItems.length}</strong>
+            </div>
+            <p>这里只展示服务器中状态为 resolved 的真实倾角告警。每条记录保留生命周期事件、最终等级、复核时间和人工结论。</p>
+          </div>
+          {reviewArchiveLoading ? (
+            <div className="desk-analysis-review-archive-empty">正在读取复核档案…</div>
+          ) : reviewArchiveError ? (
+            <div className="desk-analysis-review-error">{reviewArchiveError}</div>
+          ) : reviewArchiveItems.length ? (
+            <div className="desk-analysis-review-archive-list">
+              {reviewArchiveItems.map((item) => {
+                const deviceName = item.alert.deviceId
+                  ? devices.find((device) => device.id === item.alert.deviceId)?.name ?? item.alert.deviceId
+                  : "未绑定节点";
+                return (
+                  <div key={item.alert.alertId} className="desk-analysis-review-archive-item">
+                    <div className="desk-analysis-review-archive-item-head">
+                      <div>
+                        <Tag color={item.alert.severity === "critical" ? "red" : "orange"}>
+                          {alertSeverityLabel(item.alert.severity)}
+                        </Tag>
+                        <strong>{item.alert.title || "倾角告警"}</strong>
+                      </div>
+                      <span>{formatBeijingDateTime(item.resolvedAt)}</span>
+                    </div>
+                    <p>{item.note}</p>
+                    <div className="desk-analysis-review-archive-meta">
+                      <span>节点 {deviceName}</span>
+                      <span>生命周期 {item.eventCount} 条</span>
+                      <span title={item.alert.alertId}>编号 {item.alert.alertId}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="desk-analysis-review-archive-empty">当前没有已完成并归档的倾角复核记录。</div>
+          )}
         </div>
       </Modal>
 
@@ -3382,9 +3583,15 @@ export function AnalysisPage() {
                       </span>
                     </div>
                     <div className="desk-sensor-item">
-                      <span className="desk-sensor-label">预警设备</span>
+                      <span className="desk-sensor-label">活动倾角告警</span>
                       <span className="desk-sensor-value" style={{ color: "#ef4444" }}>
-                        {String(warningFlagCount)}
+                        {String(activeTiltAlertCount)}
+                      </span>
+                    </div>
+                    <div className="desk-sensor-item">
+                      <span className="desk-sensor-label">待人工复核</span>
+                      <span className="desk-sensor-value" style={{ color: "#fbbf24" }}>
+                        {String(pendingTiltReviewCount)}
                       </span>
                     </div>
                   </div>
