@@ -288,6 +288,90 @@
   border: 1px solid rgba(254, 226, 226, 0.16);
 }
 
+.desk-analysis-baseline-button {
+  border-color: rgba(34, 211, 238, 0.42);
+  color: #d7f8ff;
+  background: rgba(8, 47, 73, 0.74);
+}
+
+.desk-analysis-baseline-button:hover:not(:disabled) {
+  border-color: #67e8f9 !important;
+  color: #fff !important;
+  background: rgba(14, 116, 144, 0.72) !important;
+}
+
+.desk-analysis-competition-modal .ant-modal-content {
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  background: #0f1d2c;
+}
+
+.desk-analysis-competition-modal .ant-modal-header {
+  background: transparent;
+}
+
+.desk-analysis-competition-modal .ant-modal-title,
+.desk-analysis-competition-modal .ant-modal-close {
+  color: #e8f7ff;
+}
+
+.desk-analysis-competition-body {
+  display: grid;
+  gap: 18px;
+  color: #d8e8ef;
+}
+
+.desk-analysis-competition-status {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 12px;
+  color: #9eb5c1;
+  font-size: 12px;
+}
+
+.desk-analysis-competition-thresholds {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.desk-analysis-competition-thresholds label {
+  display: grid;
+  gap: 7px;
+  color: #9eb5c1;
+  font-size: 12px;
+}
+
+.desk-analysis-competition-thresholds .ant-input-number-group-wrapper,
+.desk-analysis-competition-thresholds .ant-input-number {
+  width: 100%;
+}
+
+.desk-analysis-competition-baselines {
+  display: grid;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.desk-analysis-competition-baselines > div {
+  display: grid;
+  min-height: 42px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  align-items: center;
+  grid-template-columns: minmax(140px, 1fr) repeat(3, 90px);
+  gap: 8px;
+}
+
+.desk-analysis-competition-baselines strong { color: #f1f8fb; }
+.desk-analysis-competition-baselines span { color: #a8c1cc; font-variant-numeric: tabular-nums; }
+
+.desk-analysis-competition-error {
+  padding: 10px 12px;
+  border-left: 3px solid #f97316;
+  color: #fed7aa;
+  background: rgba(124, 45, 18, 0.3);
+  line-height: 1.55;
+}
+
 @keyframes desk-analysis-pulse {
   0% {
     opacity: 0.65;

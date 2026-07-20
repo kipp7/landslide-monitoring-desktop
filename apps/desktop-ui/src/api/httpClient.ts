@@ -3,7 +3,9 @@ import type {
   AccountRole,
   AccountUser,
   AccountUserListResponse,
+  AlertStreamEvent,
   AiPrediction,
+  CompetitionTiltProfile,
   AiPredictionCalibration,
   AiPredictionForecast,
   AiPredictionRiskLevel,
@@ -504,6 +506,111 @@ async function fetchAllV1Pages<T>(
 export function createHttpClient(options: HttpClientOptions): ApiClient {
   const transport = createHttpTransport(options);
   const localDevFallback = shouldUseLocalDevFallback(options.baseUrl);
+  const subscribeToAlerts: ApiClient["alerts"]["subscribe"] = (handlers) => {
+    let stopped = false;
+    let reconnectTimer: number | null = null;
+    let controller: AbortController | null = null;
+    let lastEventId = "";
+
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer !== null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, 2000);
+    };
+
+    const consumeBlock = (block: string) => {
+      let eventName = "message";
+      let eventId = "";
+      const dataLines: string[] = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("id:")) eventId = line.slice(3).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (eventId) lastEventId = eventId;
+      if (eventName !== "alert" || dataLines.length === 0) return;
+      try {
+        const raw = asRecord(JSON.parse(dataLines.join("\n")) as unknown);
+        if (!raw || typeof raw.eventId !== "string" || typeof raw.alertId !== "string") return;
+        const severity = raw.severity;
+        const eventType = raw.eventType;
+        if (
+          severity !== "low" &&
+          severity !== "medium" &&
+          severity !== "high" &&
+          severity !== "critical"
+        ) return;
+        if (
+          eventType !== "ALERT_TRIGGER" &&
+          eventType !== "ALERT_UPDATE" &&
+          eventType !== "ALERT_ACK" &&
+          eventType !== "ALERT_RESOLVE"
+        ) return;
+        const evidence = asRecord(raw.evidence) ?? {};
+        handlers.onEvent({
+          type: "alert",
+          eventId: raw.eventId,
+          alertId: raw.alertId,
+          eventType,
+          severity,
+          title: typeof raw.title === "string" ? raw.title : "监测告警",
+          message: typeof raw.message === "string" ? raw.message : "",
+          deviceId: typeof raw.deviceId === "string" ? raw.deviceId : null,
+          stationId: typeof raw.stationId === "string" ? raw.stationId : null,
+          evidence,
+          ...(typeof raw.latitude === "number" ? { latitude: raw.latitude } : {}),
+          ...(typeof raw.longitude === "number" ? { longitude: raw.longitude } : {}),
+          createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString(),
+        } satisfies AlertStreamEvent);
+      } catch {
+        // Keep the stream alive when a single event is malformed.
+      }
+    };
+
+    const connect = async () => {
+      if (stopped) return;
+      controller = new AbortController();
+      try {
+        const headers = new Headers({ Accept: "text/event-stream", "Cache-Control": "no-cache" });
+        if (lastEventId) headers.set("Last-Event-ID", lastEventId);
+        const response = await transport.requestStream("/api/v1/alerts/stream", {
+          headers,
+          signal: controller.signal,
+        });
+        if (!response.body) throw new Error("告警实时流不可用");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        while (!stopped) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          pending = (pending + decoder.decode(chunk.value, { stream: true })).replace(/\r\n/g, "\n");
+          let boundary = pending.indexOf("\n\n");
+          while (boundary >= 0) {
+            consumeBlock(pending.slice(0, boundary));
+            pending = pending.slice(boundary + 2);
+            boundary = pending.indexOf("\n\n");
+          }
+        }
+      } catch (error) {
+        if (!stopped && !(error instanceof DOMException && error.name === "AbortError")) {
+          handlers.onError?.(error instanceof Error ? error : new Error(String(error)));
+        }
+      } finally {
+        controller = null;
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+    return () => {
+      stopped = true;
+      controller?.abort();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+    };
+  };
 
   return {
     auth: {
@@ -1036,6 +1143,7 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           summary: { active: number; acked: number; resolved: number; high: number; critical: number };
         }>(`/api/v1/alerts?${params.toString()}`);
       },
+      subscribe: subscribeToAlerts,
     },
     fieldAlarm: {
       async getStatus() {
@@ -1053,6 +1161,34 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
             body: JSON.stringify(input),
           })
         );
+      },
+      async getCompetitionProfile() {
+        const response = await transport.requestV1<{ profile: CompetitionTiltProfile | null }>(
+          "/api/v1/field-alarm/competition-profile"
+        );
+        return response.profile;
+      },
+      async captureCompetitionBaseline(input) {
+        return transport.requestV1<{
+          profile: CompetitionTiltProfile;
+          skipped: Array<{ deviceId: string; deviceName: string; reason: string }>;
+        }>(
+          "/api/v1/field-alarm/competition-profile/capture",
+          transport.withJson({
+            method: "POST",
+            body: JSON.stringify(input ?? {}),
+          })
+        );
+      },
+      async updateCompetitionProfile(input) {
+        const response = await transport.requestV1<{ profile: CompetitionTiltProfile }>(
+          "/api/v1/field-alarm/competition-profile",
+          transport.withJson({
+            method: "PUT",
+            body: JSON.stringify(input),
+          })
+        );
+        return response.profile;
       },
     },
     gps: {

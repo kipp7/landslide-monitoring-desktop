@@ -42,8 +42,8 @@ function commandTypeLabel(value: string): string {
     manual_collect: "手动采集",
     motor_start: "启动电机",
     motor_stop: "停止电机",
-    buzzer_on: "现场声光报警启动（已统一到 RK3568）",
-    buzzer_off: "现场声光报警停止（已统一到 RK3568）",
+    buzzer_on: "现场告警终端启动",
+    buzzer_off: "现场告警终端停止",
     "huawei:reboot": "华为 IoT 重启"
   };
   const label = labels[value];
@@ -1557,16 +1557,16 @@ export function SystemPage() {
     try {
       const fieldAlarmActionInput: Parameters<typeof api.fieldAlarm.sendAction>[0] = {
         action,
-        reason: action === "alarm_on" ? "系统监控页手动启动 RK3568 声光报警" : "系统监控页人工停止声光并解除当前告警，后续遥测重新建立倾角基准"
+        reason: action === "alarm_on" ? "系统监控页手动启动 Tongxiao RK2206 告警终端" : "系统监控页人工停止告警终端并解除当前告警"
       };
       if (action === "resolve" && fieldAlarmStatus?.latestAlert?.alertId) {
         fieldAlarmActionInput.alertId = fieldAlarmStatus.latestAlert.alertId;
       }
       const result = await api.fieldAlarm.sendAction(fieldAlarmActionInput);
       if (result.accepted) {
-        message.success(action === "alarm_on" ? "RK3568 声光报警已启动" : "RK3568 声光报警已停止，当前告警已解除");
+        message.success(action === "alarm_on" ? "Tongxiao RK2206 告警终端已启动" : "告警终端已停止，当前告警已解除");
       } else {
-        message.error(`RK3568 声光报警未被执行器确认：${result.actuator.lastError ?? "执行器未连接"}`);
+        message.error(`Tongxiao RK2206 未确认告警动作：${result.actuator.lastError ?? "告警终端未连接"}`);
       }
       await refreshStatus({ silent: true });
     } catch (err) {
@@ -1691,7 +1691,7 @@ export function SystemPage() {
       </section>
 
       <BaseCard
-        title="RK3568 中心节点声光报警器"
+        title="Tongxiao RK2206 现场告警终端"
         extra={
           <Space size={8} wrap>
             <Tag color={fieldAlarmStatus?.actuator.available ? "green" : "orange"}>
@@ -1706,10 +1706,10 @@ export function SystemPage() {
         <div className="system-page-field-alarm">
           <div className="system-page-field-alarm-main">
             <div className="system-page-field-alarm-title">
-              {fieldAlarmStatus?.active ? "中心节点正在驱动现场声光报警" : "手动联调 RK3568 中心节点 -> YX75R 声光报警链路"}
+              {fieldAlarmStatus?.active ? "服务器正在驱动现场告警终端" : "手动联调云端 -> Tongxiao RK2206 告警链路"}
             </div>
             <div className="system-page-field-alarm-detail">
-              {fieldAlarmStatus?.actuator.detail ?? "通过中心 API 调用 RK3568 actuator，不走 RK2206 蜂鸣器/设备命令。"}
+              {fieldAlarmStatus?.actuator.detail ?? "通过中心 API 下发到 Tongxiao RK2206 的蜂鸣器、马达、RGB 与 LCD。"}
             </div>
             {fieldAlarmStatus?.actuator.lastActionAt ? (
               <div className="system-page-field-alarm-time">最近动作 {formatTimestamp(fieldAlarmStatus.actuator.lastActionAt)}</div>
@@ -1722,13 +1722,13 @@ export function SystemPage() {
               loading={fieldAlarmBusy === "alarm_on"}
               onClick={() => void issueFieldAlarmAction("alarm_on")}
             >
-              启动 RK3568 声光
+              启动现场告警
             </Button>
             <Button
               loading={fieldAlarmBusy === "resolve"}
               onClick={() => void issueFieldAlarmAction("resolve")}
             >
-              停止 RK3568 声光
+              停止现场告警
             </Button>
           </Space>
         </div>

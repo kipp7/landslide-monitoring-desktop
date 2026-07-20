@@ -4,6 +4,7 @@ import type {
   AccountUser,
   AiPrediction,
   Baseline,
+  CompetitionTiltProfile,
   DashboardSummary,
   Device,
   EffectiveSuccessNotificationPolicy,
@@ -1354,6 +1355,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     ["u_operator", "123456"],
   ]);
   let fieldAlarmAction: FieldAlarmAction | undefined;
+  let competitionTiltProfile: CompetitionTiltProfile | null = null;
   let systemConfigs = [
     {
       key: "gps.displacement_threshold_blue_mm",
@@ -2017,6 +2019,9 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
           },
         };
       },
+      subscribe() {
+        return () => undefined;
+      },
     },
     fieldAlarm: {
       async getStatus() {
@@ -2031,6 +2036,55 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
           accepted: true,
           actuator: makeMockFieldAlarmStatus(fieldAlarmAction).actuator,
         };
+      },
+      async getCompetitionProfile() {
+        await afterDelay("fieldAlarm.getCompetitionProfile");
+        return competitionTiltProfile;
+      },
+      async captureCompetitionBaseline(input) {
+        await afterDelay("fieldAlarm.captureCompetitionBaseline");
+        const capturedAt = nowIso();
+        const selectedIds = input?.deviceIds ? new Set(input.deviceIds) : null;
+        const profileDevices = devices
+          .filter((device) => !selectedIds || selectedIds.has(device.id))
+          .slice(0, 3)
+          .map((device) => ({
+            deviceId: device.id,
+            deviceName: device.name,
+            stationId: device.stationId,
+            baseline: { x: 0, y: 0, z: 0 },
+            capturedAt,
+          }));
+        competitionTiltProfile = {
+          schemaVersion: 1,
+          mode: "competition_relative_tilt",
+          enabled: true,
+          ruleId: "10000000-0000-4000-8000-000000000001",
+          ruleVersion: 1,
+          capturedAt,
+          updatedAt: capturedAt,
+          thresholds: {
+            highDeg: input?.thresholds?.highDeg ?? 3,
+            criticalDeg: input?.thresholds?.criticalDeg ?? 7,
+            recoveryDeg: input?.thresholds?.recoveryDeg ?? 1.5,
+            triggerPoints: input?.thresholds?.triggerPoints ?? 2,
+            recoveryPoints: input?.thresholds?.recoveryPoints ?? 2,
+            updateStepDeg: input?.thresholds?.updateStepDeg ?? 0.25,
+          },
+          devices: profileDevices,
+        };
+        return { profile: competitionTiltProfile, skipped: [] };
+      },
+      async updateCompetitionProfile(input) {
+        await afterDelay("fieldAlarm.updateCompetitionProfile");
+        if (!competitionTiltProfile) throw new Error("请先采集当前倾角基线");
+        competitionTiltProfile = {
+          ...competitionTiltProfile,
+          enabled: input.enabled ?? competitionTiltProfile.enabled,
+          thresholds: { ...competitionTiltProfile.thresholds, ...(input.thresholds ?? {}) },
+          updatedAt: nowIso(),
+        };
+        return competitionTiltProfile;
       },
     },
     gps: {

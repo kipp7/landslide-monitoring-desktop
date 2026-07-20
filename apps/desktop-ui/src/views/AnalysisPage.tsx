@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Button, Input, Modal, Select, Switch, Tag } from "antd";
+import { Button, Input, InputNumber, Modal, Select, Switch, Tag } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +26,24 @@ type AnomalyRow = {
   level: "info" | "warn" | "critical";
   message: string;
   time: string;
+};
+
+type CompetitionThresholdForm = {
+  highDeg: number;
+  criticalDeg: number;
+  recoveryDeg: number;
+  triggerPoints: number;
+  recoveryPoints: number;
+  updateStepDeg: number;
+};
+
+const DEFAULT_COMPETITION_THRESHOLDS: CompetitionThresholdForm = {
+  highDeg: 3,
+  criticalDeg: 7,
+  recoveryDeg: 1.5,
+  triggerPoints: 2,
+  recoveryPoints: 2,
+  updateStepDeg: 0.25,
 };
 
 function darkAxis() {
@@ -750,6 +768,12 @@ export function AnalysisPage() {
   const [fieldAlarmReviewNote, setFieldAlarmReviewNote] = useState("现场复核确认，解除声光报警。");
   const [fieldAlarmReviewSubmitting, setFieldAlarmReviewSubmitting] = useState(false);
   const [fieldAlarmReviewError, setFieldAlarmReviewError] = useState("");
+  const [competitionSetupOpen, setCompetitionSetupOpen] = useState(false);
+  const [competitionCaptureBusy, setCompetitionCaptureBusy] = useState(false);
+  const [competitionCaptureError, setCompetitionCaptureError] = useState("");
+  const [competitionThresholds, setCompetitionThresholds] = useState<CompetitionThresholdForm>(
+    DEFAULT_COMPETITION_THRESHOLDS
+  );
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -2229,7 +2253,7 @@ export function AnalysisPage() {
     ];
     if (fieldAlarmStatus?.active) {
       summary.unshift(
-        `现场声光报警已触发：${fieldAlarmStatus.latestAlert?.title || "RK3568 声光报警器处于动作状态"}，请先人工复核现场。`
+        `现场告警已触发：${fieldAlarmStatus.latestAlert?.title || "Tongxiao RK2206 告警终端处于动作状态"}，请先人工复核现场。`
       );
     } else if (fieldAlarmStatus?.silenced) {
       summary.unshift("现场声光报警已静音，事件仍处于人工复核窗口。");
@@ -2255,6 +2279,35 @@ export function AnalysisPage() {
     return devices.find((device) => device.id === deviceId)?.name ?? deviceId;
   }, [devices, fieldAlarmStatus?.latestAlert?.deviceId]);
 
+  const openCompetitionSetup = () => {
+    setCompetitionThresholds(fieldAlarmStatus?.competitionProfile?.thresholds ?? DEFAULT_COMPETITION_THRESHOLDS);
+    setCompetitionCaptureError("");
+    setCompetitionSetupOpen(true);
+  };
+
+  const captureCompetitionBaseline = async () => {
+    if (competitionCaptureBusy) return;
+    setCompetitionCaptureBusy(true);
+    setCompetitionCaptureError("");
+    try {
+      const result = await api.fieldAlarm.captureCompetitionBaseline({ thresholds: competitionThresholds });
+      setFieldAlarmStatus((current) =>
+        current ? { ...current, competitionProfile: result.profile } : current
+      );
+      if (result.skipped.length > 0) {
+        setCompetitionCaptureError(
+          `已采集 ${result.profile.devices.length} 个节点；${result.skipped.map((item) => `${item.deviceName}：${item.reason}`).join("；")}`
+        );
+      } else {
+        setCompetitionSetupOpen(false);
+      }
+    } catch (error) {
+      setCompetitionCaptureError(error instanceof Error ? error.message : "倾角基线采集失败");
+    } finally {
+      setCompetitionCaptureBusy(false);
+    }
+  };
+
   const acknowledgeFieldAlarm = useCallback(async () => {
     setFieldAlarmReviewSubmitting(true);
     setFieldAlarmReviewError("");
@@ -2266,7 +2319,7 @@ export function AnalysisPage() {
       });
       await loadData({ silent: true });
     } catch (err) {
-      setFieldAlarmReviewError(err instanceof Error ? err.message : "复核静音失败，请检查 API 或 RK3568 执行器连接。");
+      setFieldAlarmReviewError(err instanceof Error ? err.message : "复核静音失败，请检查 API 或 Tongxiao RK2206 连接。");
     } finally {
       setFieldAlarmReviewSubmitting(false);
     }
@@ -2284,7 +2337,7 @@ export function AnalysisPage() {
       setFieldAlarmReviewOpen(false);
       await loadData({ silent: true });
     } catch (err) {
-      setFieldAlarmReviewError(err instanceof Error ? err.message : "解除警报失败，请检查 API 或 RK3568 执行器连接。");
+      setFieldAlarmReviewError(err instanceof Error ? err.message : "解除警报失败，请检查 API 或 Tongxiao RK2206 连接。");
     } finally {
       setFieldAlarmReviewSubmitting(false);
     }
@@ -2462,6 +2515,14 @@ export function AnalysisPage() {
             <Tag color={hasWarn ? "orange" : "blue"}>异常 {warningCount}</Tag>
             <Tag color={hasOffline ? "red" : "blue"}>离线 {stats.offline}</Tag>
             {fieldAlarmStatus?.active ? <Tag color="red">现场声光报警</Tag> : null}
+            <Button
+              size="small"
+              className="desk-analysis-baseline-button"
+              disabled={Boolean(fieldAlarmStatus?.active || fieldAlarmStatus?.silenced)}
+              onClick={openCompetitionSetup}
+            >
+              {fieldAlarmStatus?.competitionProfile ? "重采倾角基线" : "采集倾角基线"}
+            </Button>
             <span className="desk-analysis-meta-muted">更新 {lastUpdate || "—"}</span>
           </div>
         </div>
@@ -2495,13 +2556,13 @@ export function AnalysisPage() {
               {fieldAlarmStatus.active ? "现场声光报警已触发" : "现场报警已静音，等待人工复核"}
             </div>
             <div className="desk-analysis-field-alarm-v">
-              {fieldAlarmStatus.latestAlert?.title || "RK3568 声光报警器动作状态已由平台捕获"}
+              {fieldAlarmStatus.latestAlert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}
             </div>
           </div>
           <div className="desk-analysis-field-alarm-meta">
             <span>活跃 {fieldAlarmStatus.activeCount}</span>
             <span>复核 {fieldAlarmStatus.ackedCount}</span>
-            <span>{fieldAlarmStatus.actuator.available ? "RK3568 已连接" : "执行器未连接"}</span>
+            <span>{fieldAlarmStatus.actuator.available ? "RK2206 已连接" : "告警终端未连接"}</span>
             <Button
               size="small"
               danger={fieldAlarmStatus.active}
@@ -2569,7 +2630,7 @@ export function AnalysisPage() {
             </div>
           </div>
           <div className="desk-analysis-review-alert">
-            {fieldAlarmStatus?.latestAlert?.title || "RK3568 声光报警器动作状态已由平台捕获"}
+            {fieldAlarmStatus?.latestAlert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}
           </div>
           <Input.TextArea
             rows={3}
@@ -2579,9 +2640,107 @@ export function AnalysisPage() {
             onChange={(event) => setFieldAlarmReviewNote(event.target.value)}
           />
           <div className="desk-analysis-review-hint">
-            提交后会写入告警生命周期事件和操作日志；“解除警报”会关闭 RK3568 声光报警并清除当前红色预警态。
+            提交后会写入告警生命周期事件和操作日志；“解除警报”会关闭 Tongxiao RK2206 告警输出并清除当前红色预警态。
           </div>
           {fieldAlarmReviewError ? <div className="desk-analysis-review-error">{fieldAlarmReviewError}</div> : null}
+        </div>
+      </Modal>
+
+      <Modal
+        centered
+        width={640}
+        className="desk-analysis-competition-modal"
+        open={competitionSetupOpen}
+        title="比赛倾角告警基线"
+        onCancel={() => {
+          if (!competitionCaptureBusy) setCompetitionSetupOpen(false);
+        }}
+        footer={[
+          <Button key="cancel" disabled={competitionCaptureBusy} onClick={() => setCompetitionSetupOpen(false)}>
+            取消
+          </Button>,
+          <Button
+            key="capture"
+            type="primary"
+            danger
+            loading={competitionCaptureBusy}
+            onClick={() => { void captureCompetitionBaseline(); }}
+          >
+            采集当前姿态并启用
+          </Button>,
+        ]}
+      >
+        <div className="desk-analysis-competition-body">
+          <div className="desk-analysis-competition-status">
+            <Tag color={fieldAlarmStatus?.competitionProfile?.enabled ? "green" : "default"}>
+              {fieldAlarmStatus?.competitionProfile?.enabled ? "已启用" : "未采集"}
+            </Tag>
+            <span>覆盖节点 {fieldAlarmStatus?.competitionProfile?.devices.length ?? 0}</span>
+            <span>最近采集 {fieldAlarmStatus?.competitionProfile?.capturedAt ? formatBeijingDateTime(fieldAlarmStatus.competitionProfile.capturedAt) : "--"}</span>
+          </div>
+          <div className="desk-analysis-competition-thresholds">
+            <label>
+              <span>高风险阈值</span>
+              <InputNumber
+                min={0.5}
+                max={45}
+                step={0.5}
+                precision={1}
+                value={competitionThresholds.highDeg}
+                addonAfter="°"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, highDeg: Number(value ?? 3) }))}
+              />
+            </label>
+            <label>
+              <span>严重风险阈值</span>
+              <InputNumber
+                min={1}
+                max={90}
+                step={0.5}
+                precision={1}
+                value={competitionThresholds.criticalDeg}
+                addonAfter="°"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, criticalDeg: Number(value ?? 7) }))}
+              />
+            </label>
+            <label>
+              <span>重新布防范围</span>
+              <InputNumber
+                min={0}
+                max={20}
+                step={0.5}
+                precision={1}
+                value={competitionThresholds.recoveryDeg}
+                addonAfter="°"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, recoveryDeg: Number(value ?? 1.5) }))}
+              />
+            </label>
+            <label>
+              <span>连续确认点数</span>
+              <InputNumber
+                min={1}
+                max={10}
+                step={1}
+                precision={0}
+                value={competitionThresholds.triggerPoints}
+                addonAfter="点"
+                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, triggerPoints: Number(value ?? 2) }))}
+              />
+            </label>
+          </div>
+          {fieldAlarmStatus?.competitionProfile?.devices.length ? (
+            <div className="desk-analysis-competition-baselines">
+              {fieldAlarmStatus.competitionProfile.devices.map((device) => (
+                <div key={device.deviceId}>
+                  <strong>{device.deviceName}</strong>
+                  <span>X {device.baseline.x.toFixed(2)}°</span>
+                  <span>Y {device.baseline.y.toFixed(2)}°</span>
+                  <span>Z {device.baseline.z.toFixed(2)}°</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {competitionCaptureError ? <div className="desk-analysis-competition-error">{competitionCaptureError}</div> : null}
         </div>
       </Modal>
 

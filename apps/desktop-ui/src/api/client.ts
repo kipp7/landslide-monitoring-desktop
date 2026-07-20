@@ -195,6 +195,60 @@ export type AlertSummaryItem = {
   lastEventAt: string;
 };
 
+export type AlertStreamEvent = {
+  type: "alert";
+  eventId: string;
+  alertId: string;
+  eventType: "ALERT_TRIGGER" | "ALERT_UPDATE" | "ALERT_ACK" | "ALERT_RESOLVE";
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  deviceId: string | null;
+  stationId: string | null;
+  evidence: Record<string, unknown>;
+  latitude?: number;
+  longitude?: number;
+  createdAt: string;
+};
+
+export type CompetitionTiltVector = { x: number; y: number; z: number };
+
+export type CompetitionTiltProfile = {
+  schemaVersion: 1;
+  mode: "competition_relative_tilt";
+  enabled: boolean;
+  ruleId: string;
+  ruleVersion: number;
+  capturedAt: string;
+  updatedAt: string;
+  thresholds: {
+    highDeg: number;
+    criticalDeg: number;
+    recoveryDeg: number;
+    triggerPoints: number;
+    recoveryPoints: number;
+    updateStepDeg: number;
+  };
+  devices: Array<{
+    deviceId: string;
+    deviceName: string;
+    stationId: string | null;
+    baseline: CompetitionTiltVector;
+    capturedAt: string;
+  }>;
+  live?: Array<{
+    deviceId: string;
+    updatedAt: string | null;
+    deviation: {
+      current: CompetitionTiltVector;
+      baseline: CompetitionTiltVector;
+      delta: CompetitionTiltVector;
+      maxAxis: "x" | "y" | "z";
+      maxDeviationDeg: number;
+    } | null;
+  }>;
+};
+
 export type FieldAlarmActuatorStatus = {
   available: boolean;
   dryRun?: boolean;
@@ -204,6 +258,7 @@ export type FieldAlarmActuatorStatus = {
   lastError?: string | null;
   detail?: string;
   yx75r?: unknown;
+  tongxiao?: unknown;
 };
 
 export type FieldAlarmStatus = {
@@ -215,6 +270,7 @@ export type FieldAlarmStatus = {
   latestAlert: AlertSummaryItem | null;
   alerts: AlertSummaryItem[];
   actuator: FieldAlarmActuatorStatus;
+  competitionProfile?: CompetitionTiltProfile | null;
 };
 
 export type FieldAlarmAction = "alarm_on" | "alarm_off" | "silence" | "status" | "ack" | "resolve";
@@ -739,6 +795,10 @@ export type ApiClient = {
       pagination: { page: number; pageSize: number; total: number; totalPages: number };
       summary: { active: number; acked: number; resolved: number; high: number; critical: number };
     }>;
+    subscribe: (handlers: {
+      onEvent: (event: AlertStreamEvent) => void;
+      onError?: (error: Error) => void;
+    }) => () => void;
   };
   fieldAlarm: {
     getStatus: () => Promise<FieldAlarmStatus>;
@@ -747,6 +807,15 @@ export type ApiClient = {
       reason?: string;
       alertId?: string;
     }) => Promise<FieldAlarmActionResult>;
+    getCompetitionProfile: () => Promise<CompetitionTiltProfile | null>;
+    captureCompetitionBaseline: (input?: {
+      deviceIds?: string[];
+      thresholds?: Partial<CompetitionTiltProfile["thresholds"]>;
+    }) => Promise<{ profile: CompetitionTiltProfile; skipped: Array<{ deviceId: string; deviceName: string; reason: string }> }>;
+    updateCompetitionProfile: (input: {
+      enabled?: boolean;
+      thresholds?: Partial<CompetitionTiltProfile["thresholds"]>;
+    }) => Promise<CompetitionTiltProfile>;
   };
   gps: {
     getSeries: (input: { deviceId: string; days?: number }) => Promise<GpsSeries>;
