@@ -15,6 +15,7 @@ const GpsMonitoringPage = lazy(async () => ({ default: (await import("../views/G
 const GpsPage = lazy(async () => ({ default: (await import("../views/GpsPage")).GpsPage }));
 const HomePage = lazy(async () => ({ default: (await import("../views/HomePage")).HomePage }));
 const LoginPage = lazy(async () => ({ default: (await import("../views/LoginPage")).LoginPage }));
+const ReviewArchivePage = lazy(async () => ({ default: (await import("../views/ReviewArchivePage")).ReviewArchivePage }));
 const SettingsPage = lazy(async () => ({ default: (await import("../views/SettingsPage")).SettingsPage }));
 const StationsPage = lazy(async () => ({ default: (await import("../views/StationsPage")).StationsPage }));
 const SystemPage = lazy(async () => ({ default: (await import("../views/SystemPage")).SystemPage }));
@@ -37,6 +38,7 @@ export function AppRoutes() {
           <Route index element={<Navigate to="home" replace />} />
           <Route path="home" element={<HomePage />} />
           <Route path="analysis" element={<AnalysisPage />} />
+          <Route path="review-archive" element={<ReviewArchivePage />} />
           <Route path="device-management/onboarding" element={<DeviceOnboardingPage />} />
           <Route path="device-management" element={<DeviceManagementPage />} />
           <Route path="gps-monitoring" element={<GpsMonitoringPage />} />

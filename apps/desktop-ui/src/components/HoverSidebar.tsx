@@ -3,6 +3,7 @@ import {
   BarChartOutlined,
   DesktopOutlined,
   EnvironmentOutlined,
+  FileDoneOutlined,
   HomeOutlined,
   LogoutOutlined,
   MenuUnfoldOutlined,
@@ -18,7 +19,7 @@ import "./hoverSidebar.css";
 
 const { Sider } = Layout;
 
-type MenuKey = "home" | "analysis" | "device-management" | "gps-monitoring" | "system" | "accounts" | "settings";
+type MenuKey = "home" | "analysis" | "review-archive" | "device-management" | "gps-monitoring" | "system" | "accounts" | "settings";
 
 type HoverSidebarProps = {
   userName?: string | null;
@@ -28,6 +29,7 @@ type HoverSidebarProps = {
 function keyFromPath(pathname: string): MenuKey {
   if (pathname.startsWith("/app/home")) return "home";
   if (pathname.startsWith("/app/analysis")) return "analysis";
+  if (pathname.startsWith("/app/review-archive")) return "review-archive";
   if (pathname.startsWith("/app/device-management")) return "device-management";
   if (pathname.startsWith("/app/gps-monitoring")) return "gps-monitoring";
   if (pathname.startsWith("/app/system")) return "system";
@@ -84,6 +86,7 @@ export function HoverSidebar({ userName, onLogout }: HoverSidebarProps) {
           onClick={({ key }) => {
             if (key === "home") navigate("/app/home");
             if (key === "analysis") navigate("/app/analysis");
+            if (key === "review-archive") navigate("/app/review-archive");
             if (key === "device-management") navigate("/app/device-management");
             if (key === "gps-monitoring") navigate("/app/gps-monitoring");
             if (key === "system") navigate("/app/system");
@@ -93,6 +96,7 @@ export function HoverSidebar({ userName, onLogout }: HoverSidebarProps) {
           items={[
             { key: "home", icon: <HomeOutlined />, label: "首页" },
             { key: "analysis", icon: <BarChartOutlined />, label: "数据分析" },
+            { key: "review-archive", icon: <FileDoneOutlined />, label: "复核档案" },
             { key: "device-management", icon: <DesktopOutlined />, label: "设备管理" },
             { key: "gps-monitoring", icon: <EnvironmentOutlined />, label: "地质形变监测" },
             { key: "system", icon: <RadarChartOutlined />, label: "系统监控" },

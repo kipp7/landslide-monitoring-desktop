@@ -226,7 +226,10 @@ function makeMockHermesVolatilitySurface(): NonNullable<SystemStatus["hermesEdge
   };
 }
 
-function makeMockFieldAlarmStatus(action?: FieldAlarmAction): FieldAlarmStatus {
+function makeMockFieldAlarmStatus(
+  action?: FieldAlarmAction,
+  competitionProfile?: CompetitionTiltProfile | null
+): FieldAlarmStatus {
   const active = action === "alarm_on";
   const silenced = action === "silence" || action === "ack";
   const resolved = action === "alarm_off" || action === "resolve";
@@ -260,6 +263,7 @@ function makeMockFieldAlarmStatus(action?: FieldAlarmAction): FieldAlarmStatus {
       lastActionAt: action ? nowIso() : null,
       detail: "Mock 模式：模拟 RK3568 /dev/ttyS7 声光报警执行器。",
     },
+    competitionProfile: competitionProfile ?? null,
   };
 }
 
@@ -1355,7 +1359,51 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     ["u_operator", "123456"],
   ]);
   let fieldAlarmAction: FieldAlarmAction | undefined;
-  let competitionTiltProfile: CompetitionTiltProfile | null = null;
+  const mockTiltCapturedAt = nowIso();
+  const mockTiltDevices = devices.filter((device) => device.identityClass === "formal" && device.type === "tilt").slice(0, 3);
+  let competitionTiltProfile: CompetitionTiltProfile | null = {
+    schemaVersion: 1,
+    mode: "competition_relative_tilt",
+    enabled: true,
+    ruleId: "10000000-0000-4000-8000-000000000001",
+    ruleVersion: 1,
+    capturedAt: mockTiltCapturedAt,
+    updatedAt: mockTiltCapturedAt,
+    thresholds: {
+      highDeg: 3,
+      criticalDeg: 7,
+      recoveryDeg: 1.5,
+      triggerPoints: 2,
+      recoveryPoints: 2,
+      updateStepDeg: 0.25,
+    },
+    devices: mockTiltDevices.map((device) => ({
+      deviceId: device.id,
+      deviceName: device.name,
+      stationId: device.stationId,
+      baseline: { x: 0, y: 0, z: 0 },
+      capturedAt: mockTiltCapturedAt,
+    })),
+    live: mockTiltDevices.map((device, index) => {
+      const x = Number((stablePercent(`${device.id}-tilt-x`, 18, 96) / 100).toFixed(3));
+      const y = Number((stablePercent(`${device.id}-tilt-y`, 12, 84) / 100).toFixed(3));
+      const z = Number((stablePercent(`${device.id}-tilt-z`, 8, 62) / 100).toFixed(3));
+      const delta = index === 1 ? { x: x + 3.2, y, z } : { x, y, z };
+      const axes = (["x", "y", "z"] as const).map((axis) => ({ axis, value: Math.abs(delta[axis]) }));
+      const peak = axes.sort((a, b) => b.value - a.value)[0]!;
+      return {
+        deviceId: device.id,
+        updatedAt: mockTiltCapturedAt,
+        deviation: {
+          current: delta,
+          baseline: { x: 0, y: 0, z: 0 },
+          delta,
+          maxAxis: peak.axis,
+          maxDeviationDeg: peak.value,
+        },
+      };
+    }),
+  };
   let systemConfigs = [
     {
       key: "gps.displacement_threshold_blue_mm",
@@ -1991,7 +2039,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     alerts: {
       async list(input) {
         await afterDelay("alerts.list");
-        const status = makeMockFieldAlarmStatus(fieldAlarmAction);
+        const status = makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile);
         const all = status.latestAlert ? [status.latestAlert] : [];
         const filtered = all.filter((item) => {
           if (input?.deviceId && item.deviceId !== input.deviceId) return false;
@@ -2021,7 +2069,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
       },
       async getEvents(alertId) {
         await afterDelay("alerts.getEvents");
-        const alert = makeMockFieldAlarmStatus(fieldAlarmAction).latestAlert;
+        const alert = makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile).latestAlert;
         if (!alert || alert.alertId !== alertId) return { alertId, events: [] };
         return {
           alertId,
@@ -2047,7 +2095,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
     fieldAlarm: {
       async getStatus() {
         await afterDelay("fieldAlarm.getStatus");
-        return makeMockFieldAlarmStatus(fieldAlarmAction);
+        return makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile);
       },
       async sendAction(input) {
         await afterDelay("fieldAlarm.sendAction");
@@ -2055,7 +2103,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
         return {
           action: input.action,
           accepted: true,
-          actuator: makeMockFieldAlarmStatus(fieldAlarmAction).actuator,
+          actuator: makeMockFieldAlarmStatus(fieldAlarmAction, competitionTiltProfile).actuator,
         };
       },
       async getCompetitionProfile() {

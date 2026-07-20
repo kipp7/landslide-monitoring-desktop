@@ -319,9 +319,9 @@ function HermesVolatilityThreeSurface({
     const colorMode = presentation.colorMode ?? "default";
     const warningRatio = presentation.warningRatio ?? 60;
     const isTiltRiskSurface = colorMode === "tilt-risk";
-    const xStep = 1.12;
-    const zStep = 0.52;
-    const yScale = 0.031;
+    const xStep = isTiltRiskSurface ? 1.62 : 1.12;
+    const zStep = isTiltRiskSurface ? 1.18 : 0.52;
+    const yScale = isTiltRiskSurface ? 0.024 : 0.031;
     const xOffset = ((horizons.length - 1) * xStep) / 2;
     const zOffset = ((dimensions.length - 1) * zStep) / 2;
     const sceneObjects: THREE.Object3D[] = [];
@@ -339,6 +339,29 @@ function HermesVolatilityThreeSurface({
         score
       };
     };
+    const interpolateSurfacePoint = (u: number, v: number) => {
+      const horizonPosition = u * Math.max(1, horizons.length - 1);
+      const dimensionPosition = v * Math.max(1, dimensions.length - 1);
+      const h0 = Math.min(horizons.length - 1, Math.floor(horizonPosition));
+      const h1 = Math.min(horizons.length - 1, h0 + 1);
+      const d0 = Math.min(dimensions.length - 1, Math.floor(dimensionPosition));
+      const d1 = Math.min(dimensions.length - 1, d0 + 1);
+      const tx = horizonPosition - h0;
+      const tz = dimensionPosition - d0;
+      const score00 = pointPosition(h0, d0).score;
+      const score10 = pointPosition(h1, d0).score;
+      const score01 = pointPosition(h0, d1).score;
+      const score11 = pointPosition(h1, d1).score;
+      const upper = THREE.MathUtils.lerp(score00, score10, tx);
+      const lower = THREE.MathUtils.lerp(score01, score11, tx);
+      const score = THREE.MathUtils.lerp(upper, lower, tz);
+      return {
+        x: u * Math.max(1, horizons.length - 1) * xStep - xOffset,
+        y: 0.18 + score * yScale,
+        z: v * Math.max(1, dimensions.length - 1) * zStep - zOffset,
+        score
+      };
+    };
     const addVisualMicrostructure = (point: THREE.Vector3, sampleIndex: number, dimensionIndex: number, strength = 1) => {
       if (isTiltRiskSurface) return point.clone();
       const waveA = Math.sin(sampleIndex * 0.31 + dimensionIndex * 1.17);
@@ -353,21 +376,26 @@ function HermesVolatilityThreeSurface({
     const positions: number[] = [];
     const colors: number[] = [];
     const indices: number[] = [];
+    const meshColumns = isTiltRiskSurface ? 33 : horizons.length;
+    const meshRows = isTiltRiskSurface ? 25 : dimensions.length;
 
-    for (let d = 0; d < dimensions.length; d += 1) {
-      for (let h = 0; h < horizons.length; h += 1) {
-        const p = pointPosition(h, d);
+    for (let d = 0; d < meshRows; d += 1) {
+      for (let h = 0; h < meshColumns; h += 1) {
+        const p = interpolateSurfacePoint(
+          meshColumns <= 1 ? 0 : h / (meshColumns - 1),
+          meshRows <= 1 ? 0 : d / (meshRows - 1)
+        );
         positions.push(p.x, p.y, p.z);
         const color = scoreToThreeColor(p.score, colorMode, warningRatio);
         colors.push(color.r, color.g, color.b);
       }
     }
 
-    for (let d = 0; d < dimensions.length - 1; d += 1) {
-      for (let h = 0; h < horizons.length - 1; h += 1) {
-        const a = d * horizons.length + h;
+    for (let d = 0; d < meshRows - 1; d += 1) {
+      for (let h = 0; h < meshColumns - 1; h += 1) {
+        const a = d * meshColumns + h;
         const b = a + 1;
-        const c = (d + 1) * horizons.length + h;
+        const c = (d + 1) * meshColumns + h;
         const e = c + 1;
         indices.push(a, c, b, b, c, e);
       }
@@ -382,10 +410,10 @@ function HermesVolatilityThreeSurface({
 
     const surfaceMaterial = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      roughness: 0.3,
-      metalness: 0.1,
+      roughness: isTiltRiskSurface ? 0.42 : 0.3,
+      metalness: isTiltRiskSurface ? 0.18 : 0.1,
       transparent: true,
-      opacity: 0.14,
+      opacity: isTiltRiskSurface ? 0.34 : 0.14,
       side: THREE.DoubleSide,
       depthWrite: false
     });
@@ -393,6 +421,59 @@ function HermesVolatilityThreeSurface({
     const surfaceMesh = new THREE.Mesh(geometry, surfaceMaterial);
     world.add(surfaceMesh);
     sceneObjects.push(surfaceMesh);
+
+    if (isTiltRiskSurface) {
+      const wireMaterial = new THREE.MeshBasicMaterial({
+        color: 0x7dd3fc,
+        transparent: true,
+        opacity: 0.13,
+        wireframe: true,
+        depthWrite: false
+      });
+      const wireMesh = new THREE.Mesh(geometry, wireMaterial);
+      world.add(wireMesh);
+      sceneObjects.push(wireMesh);
+      disposableMaterials.push(wireMaterial);
+
+      for (let rowIndex = 0; rowIndex <= 8; rowIndex += 1) {
+        const v = rowIndex / 8;
+        const linePoints = Array.from({ length: 65 }, (_, index) => {
+          const point = interpolateSurfacePoint(index / 64, v);
+          return new THREE.Vector3(point.x, point.y + 0.012, point.z);
+        });
+        const averageScore = linePoints.reduce((sum, point) => sum + Math.max(0, (point.y - 0.18) / yScale), 0) / linePoints.length;
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+        const lineMaterial = new THREE.LineBasicMaterial({
+          color: scoreToThreeColor(averageScore, colorMode, warningRatio),
+          transparent: true,
+          opacity: rowIndex % 4 === 0 ? 0.72 : 0.3
+        });
+        const line = new THREE.Line(lineGeometry, lineMaterial);
+        world.add(line);
+        sceneObjects.push(line);
+        disposableGeometries.push(lineGeometry);
+        disposableMaterials.push(lineMaterial);
+      }
+
+      for (let columnIndex = 0; columnIndex <= 12; columnIndex += 1) {
+        const u = columnIndex / 12;
+        const linePoints = Array.from({ length: 49 }, (_, index) => {
+          const point = interpolateSurfacePoint(u, index / 48);
+          return new THREE.Vector3(point.x, point.y + 0.01, point.z);
+        });
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+        const lineMaterial = new THREE.LineBasicMaterial({
+          color: columnIndex % 6 === 0 ? 0x67e8f9 : 0x60a5fa,
+          transparent: true,
+          opacity: columnIndex % 6 === 0 ? 0.46 : 0.18
+        });
+        const line = new THREE.Line(lineGeometry, lineMaterial);
+        world.add(line);
+        sceneObjects.push(line);
+        disposableGeometries.push(lineGeometry);
+        disposableMaterials.push(lineMaterial);
+      }
+    }
 
     const floorGeometry = new THREE.PlaneGeometry(6.2, 4.5, 1, 1);
     const floorPlaneMaterial = new THREE.MeshBasicMaterial({
@@ -421,6 +502,43 @@ function HermesVolatilityThreeSurface({
     disposableGeometries.push(floor.geometry);
     disposableMaterials.push(floorMaterial);
 
+    if (isTiltRiskSurface) {
+      [
+        { score: warningRatio, color: 0xf97316 },
+        { score: 100, color: 0xef4444 }
+      ].forEach((threshold) => {
+        const thresholdGeometry = new THREE.PlaneGeometry(xOffset * 2 + 0.46, zOffset * 2 + 0.46);
+        const thresholdMaterial = new THREE.MeshBasicMaterial({
+          color: threshold.color,
+          transparent: true,
+          opacity: threshold.score === 100 ? 0.05 : 0.035,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+        const thresholdPlane = new THREE.Mesh(thresholdGeometry, thresholdMaterial);
+        thresholdPlane.rotation.x = -Math.PI / 2;
+        thresholdPlane.position.y = 0.18 + threshold.score * yScale;
+        world.add(thresholdPlane);
+        sceneObjects.push(thresholdPlane);
+        disposableGeometries.push(thresholdGeometry);
+        disposableMaterials.push(thresholdMaterial);
+
+        const thresholdEdgesGeometry = new THREE.EdgesGeometry(thresholdGeometry);
+        const thresholdEdgesMaterial = new THREE.LineBasicMaterial({
+          color: threshold.color,
+          transparent: true,
+          opacity: threshold.score === 100 ? 0.5 : 0.32
+        });
+        const thresholdEdges = new THREE.LineSegments(thresholdEdgesGeometry, thresholdEdgesMaterial);
+        thresholdEdges.rotation.x = -Math.PI / 2;
+        thresholdEdges.position.y = thresholdPlane.position.y + 0.006;
+        world.add(thresholdEdges);
+        sceneObjects.push(thresholdEdges);
+        disposableGeometries.push(thresholdEdgesGeometry);
+        disposableMaterials.push(thresholdEdgesMaterial);
+      });
+    }
+
     const axesMaterial = new THREE.LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.34 });
     const axesGeometry = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3),
@@ -428,7 +546,7 @@ function HermesVolatilityThreeSurface({
       new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3),
       new THREE.Vector3(-xOffset - 0.42, 0, zOffset + 0.46),
       new THREE.Vector3(-xOffset - 0.42, 0, -zOffset - 0.3),
-      new THREE.Vector3(-xOffset - 0.42, 3.45, -zOffset - 0.3)
+      new THREE.Vector3(-xOffset - 0.42, 0.18 + 142 * yScale, -zOffset - 0.3)
     ]);
     const axes = new THREE.LineSegments(axesGeometry, axesMaterial);
     world.add(axes);
@@ -448,7 +566,7 @@ function HermesVolatilityThreeSurface({
       })
       .sort((a, b) => b.average - a.average);
     const highlightedDimensionIndexes = new Set(dimensionAverages.slice(0, 4).map((item) => item.index));
-    const pointGeometry = new THREE.SphereGeometry(0.034, 14, 10);
+    const pointGeometry = new THREE.SphereGeometry(isTiltRiskSurface ? 0.055 : 0.034, 14, 10);
     disposableGeometries.push(pointGeometry);
     const cloudPositions: number[] = [];
     const cloudColors: number[] = [];
@@ -459,22 +577,29 @@ function HermesVolatilityThreeSurface({
       const rawPoints = horizons.map((__, horizonIndex) => pointPosition(horizonIndex, dimensionIndex));
       const curvePoints = rawPoints.map((point) => new THREE.Vector3(point.x, point.y, point.z));
       const curve = new THREE.CatmullRomCurve3(curvePoints, false, "catmullrom", 0.42);
-      const sampledPoints = curve.getPoints(108).map((point, index) => addVisualMicrostructure(point, index, dimensionIndex, 1));
+      const sampledPoints = isTiltRiskSurface
+        ? Array.from({ length: 109 }, (_, index) => {
+            const point = interpolateSurfacePoint(index / 108, dimensionIndex / Math.max(1, dimensions.length - 1));
+            return new THREE.Vector3(point.x, point.y, point.z);
+          })
+        : curve.getPoints(108).map((point, index) => addVisualMicrostructure(point, index, dimensionIndex, 1));
       const averageScore = rawPoints.reduce((sum, point) => sum + point.score, 0) / Math.max(1, rawPoints.length);
       const baseColor = scoreToThreeColor(averageScore, colorMode, warningRatio);
       const isHighlighted = highlightedDimensionIndexes.has(dimensionIndex);
 
-      sampledPoints.forEach((point, index) => {
-        if (index % 2 !== 0) return;
-        cloudPositions.push(point.x, point.y, point.z);
-        const pointColor = isHighlighted ? baseColor.clone().lerp(new THREE.Color("#ffffff"), 0.18) : baseColor;
-        cloudColors.push(pointColor.r, pointColor.g, pointColor.b);
+      if (!isTiltRiskSurface) {
+        sampledPoints.forEach((point, index) => {
+          if (index % 2 !== 0) return;
+          cloudPositions.push(point.x, point.y, point.z);
+          const pointColor = isHighlighted ? baseColor.clone().lerp(new THREE.Color("#ffffff"), 0.18) : baseColor;
+          cloudColors.push(pointColor.r, pointColor.g, pointColor.b);
 
-        if (isHighlighted && index % 6 === 0) {
-          dropLinePositions.push(point.x, point.y, point.z, point.x, 0.02, point.z);
-          dropLineColors.push(baseColor.r, baseColor.g, baseColor.b, baseColor.r, baseColor.g, baseColor.b);
-        }
-      });
+          if (isHighlighted && index % 6 === 0) {
+            dropLinePositions.push(point.x, point.y, point.z, point.x, 0.02, point.z);
+            dropLineColors.push(baseColor.r, baseColor.g, baseColor.b, baseColor.r, baseColor.g, baseColor.b);
+          }
+        });
+      }
 
       const lineGeometry = new THREE.BufferGeometry().setFromPoints(sampledPoints);
       const lineMaterial = new THREE.LineBasicMaterial({
@@ -556,16 +681,46 @@ function HermesVolatilityThreeSurface({
       }
 
       rawPoints.forEach((point) => {
+        if (isTiltRiskSurface) {
+          cloudPositions.push(point.x, point.y, point.z);
+          const actualPointColor = scoreToThreeColor(point.score, colorMode, warningRatio).clone().lerp(new THREE.Color("#ffffff"), 0.16);
+          cloudColors.push(actualPointColor.r, actualPointColor.g, actualPointColor.b);
+          dropLinePositions.push(point.x, point.y, point.z, point.x, 0.02, point.z);
+          dropLineColors.push(
+            actualPointColor.r,
+            actualPointColor.g,
+            actualPointColor.b,
+            actualPointColor.r,
+            actualPointColor.g,
+            actualPointColor.b
+          );
+        }
         const pointMaterial = new THREE.MeshBasicMaterial({
-          color: baseColor,
+          color: isTiltRiskSurface ? scoreToThreeColor(point.score, colorMode, warningRatio) : baseColor,
           transparent: true,
-          opacity: isHighlighted ? 0.95 : 0.48
+          opacity: isTiltRiskSurface ? 1 : isHighlighted ? 0.95 : 0.48
         });
         const dot = new THREE.Mesh(pointGeometry, pointMaterial);
         dot.position.set(point.x, point.y, point.z);
         world.add(dot);
         sceneObjects.push(dot);
         disposableMaterials.push(pointMaterial);
+
+        if (isTiltRiskSurface) {
+          const haloGeometry = new THREE.SphereGeometry(0.105, 12, 8);
+          const haloMaterial = new THREE.MeshBasicMaterial({
+            color: scoreToThreeColor(point.score, colorMode, warningRatio),
+            transparent: true,
+            opacity: 0.12,
+            depthWrite: false
+          });
+          const halo = new THREE.Mesh(haloGeometry, haloMaterial);
+          halo.position.copy(dot.position);
+          world.add(halo);
+          sceneObjects.push(halo);
+          disposableGeometries.push(haloGeometry);
+          disposableMaterials.push(haloMaterial);
+        }
       });
     });
 
@@ -577,7 +732,12 @@ function HermesVolatilityThreeSurface({
         "catmullrom",
         0.36
       );
-      const sampledPoints = curve.getPoints(86);
+      const sampledPoints = isTiltRiskSurface
+        ? Array.from({ length: 87 }, (_, index) => {
+            const point = interpolateSurfacePoint(horizonIndex / Math.max(1, horizons.length - 1), index / 86);
+            return new THREE.Vector3(point.x, point.y, point.z);
+          })
+        : curve.getPoints(86);
       const averageScore = rawPoints.reduce((sum, point) => sum + point.score, 0) / Math.max(1, rawPoints.length);
       const baseColor = scoreToThreeColor(averageScore, colorMode, warningRatio).lerp(new THREE.Color("#7dd3fc"), 0.18);
 
@@ -702,6 +862,7 @@ function HermesVolatilityThreeSurface({
 
     let frame = 0;
     let disposed = false;
+    let animationFrameId = 0;
     const animate = () => {
       if (disposed) return;
       frame += 1;
@@ -710,23 +871,26 @@ function HermesVolatilityThreeSurface({
       currentPitch += (targetPitch - currentPitch) * 0.08;
       world.rotation.set(currentPitch, currentYaw, 0);
       renderer.render(scene, camera);
-      window.requestAnimationFrame(animate);
+      animationFrameId = window.requestAnimationFrame(animate);
     };
     animate();
 
     return () => {
       disposed = true;
+      window.cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
       renderer.domElement.removeEventListener("pointerup", handlePointerUp);
       renderer.domElement.removeEventListener("pointercancel", handlePointerUp);
       renderer.domElement.removeEventListener("wheel", handleWheel);
-      mount.removeChild(renderer.domElement);
+      if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement);
       sceneObjects.forEach((object) => world.remove(object));
       disposableGeometries.forEach((item) => item.dispose());
       disposableMaterials.forEach((item) => item.dispose());
+      renderer.renderLists.dispose();
       renderer.dispose();
+      renderer.forceContextLoss();
     };
   }, [presentation.colorMode, presentation.warningRatio, surface]);
 
@@ -830,7 +994,7 @@ function buildRealtimeTiltSurface(status: FieldAlarmStatus | null): RealtimeTilt
       peakDimensionKey: peak.deviceId,
       peakHorizonMinutes: axes.indexOf(peak.maxAxis),
       modelConfidence: null,
-      note: "曲面只对 A/B/C 的真实 X/Y/Z 倾角偏移做连线展示；高度按严重阈值归一化，超过 140% 限幅，角度数值保持真实。"
+      note: "曲面由 A/B/C 的 9 个真实 X/Y/Z 倾角偏移点进行双线性插值；高度按严重阈值归一化，超过 140% 限幅，侧栏角度始终保留真实值。"
     }
   };
 }
@@ -893,11 +1057,11 @@ function TiltBusinessSurfaceView({ data }: { data: RealtimeTiltSurfaceData | nul
               surface={data.surface}
               presentation={{
                 captionTitle: "真实倾角形变曲面",
-                captionText: "拖动旋转、滚轮缩放；曲面为真实离散点的可视化连线，精确角度以右侧读数为准。",
+                captionText: "拖动旋转、滚轮缩放；发光点为真实姿态，连续曲面由真实点双线性插值，精确角度以右侧读数为准。",
                 xAxisLabel: "X 倾角轴（X / Y / Z）",
                 yAxisLabel: "Y 正式分节点（A / B / C）",
                 zAxisLabel: "Z 相对基线偏移（°）",
-                legendLabels: ["真实姿态点", "节点轴向连线", "节点切片"],
+                legendLabels: ["真实姿态点", "插值等值线", "告警阈值面"],
                 colorMode: "tilt-risk",
                 warningRatio
               }}

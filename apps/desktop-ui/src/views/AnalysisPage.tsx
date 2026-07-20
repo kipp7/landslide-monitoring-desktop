@@ -59,13 +59,6 @@ type CompetitionThresholdForm = {
 
 type ReviewConclusion = "confirmed_risk" | "environmental_disturbance" | "device_issue" | "false_positive";
 
-type ReviewArchiveItem = {
-  alert: AlertSummaryItem;
-  resolvedAt: string;
-  note: string;
-  eventCount: number;
-};
-
 const DEFAULT_COMPETITION_THRESHOLDS: CompetitionThresholdForm = {
   highDeg: 3,
   criticalDeg: 7,
@@ -853,10 +846,6 @@ export function AnalysisPage() {
   const [fieldAlarmReviewSubmitting, setFieldAlarmReviewSubmitting] = useState(false);
   const [fieldAlarmReviewError, setFieldAlarmReviewError] = useState("");
   const [fieldAlarmEvents, setFieldAlarmEvents] = useState<AlertLifecycleEvent[]>([]);
-  const [reviewArchiveOpen, setReviewArchiveOpen] = useState(false);
-  const [reviewArchiveLoading, setReviewArchiveLoading] = useState(false);
-  const [reviewArchiveError, setReviewArchiveError] = useState("");
-  const [reviewArchiveItems, setReviewArchiveItems] = useState<ReviewArchiveItem[]>([]);
   const [competitionSetupOpen, setCompetitionSetupOpen] = useState(false);
   const [competitionCaptureBusy, setCompetitionCaptureBusy] = useState(false);
   const [competitionCaptureError, setCompetitionCaptureError] = useState("");
@@ -2431,58 +2420,6 @@ export function AnalysisPage() {
     };
   }, [api, fieldAlarmAlertId, fieldAlarmReviewOpen]);
 
-  useEffect(() => {
-    if (!reviewArchiveOpen) return;
-    let cancelled = false;
-    const ruleId = fieldAlarmStatus?.competitionProfile?.ruleId;
-    setReviewArchiveLoading(true);
-    setReviewArchiveError("");
-    void api.alerts
-      .list({ page: 1, pageSize: 50, status: "resolved" })
-      .then(async (result) => {
-        const resolvedAlerts = result.list
-          .filter((alert) => !ruleId || alert.ruleId === ruleId)
-          .slice(0, 20);
-        const items = await Promise.all(
-          resolvedAlerts.map(async (alert): Promise<ReviewArchiveItem> => {
-            try {
-              const detail = await api.alerts.getEvents(alert.alertId);
-              const resolveEvent = detail.events
-                .filter((event) => event.eventType === "ALERT_RESOLVE")
-                .slice()
-                .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-              return {
-                alert,
-                resolvedAt: resolveEvent?.createdAt ?? alert.lastEventAt,
-                note: resolveEvent ? lifecycleEventNote(resolveEvent) : "未填写复核结论",
-                eventCount: detail.events.length,
-              };
-            } catch {
-              return {
-                alert,
-                resolvedAt: alert.lastEventAt,
-                note: "复核事件读取失败",
-                eventCount: 0,
-              };
-            }
-          })
-        );
-        if (!cancelled) setReviewArchiveItems(items);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setReviewArchiveItems([]);
-          setReviewArchiveError(error instanceof Error ? error.message : "复核档案读取失败");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setReviewArchiveLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, fieldAlarmStatus?.competitionProfile?.ruleId, reviewArchiveOpen]);
-
   const fieldAlarmReviewData = useMemo(() => {
     const alert = fieldAlarmStatus?.latestAlert ?? null;
     const profile = fieldAlarmStatus?.competitionProfile ?? null;
@@ -2799,7 +2736,7 @@ export function AnalysisPage() {
               size="small"
               className="desk-analysis-baseline-button"
               icon={<HistoryOutlined />}
-              onClick={() => setReviewArchiveOpen(true)}
+              onClick={() => navigate("/app/review-archive")}
             >
               复核档案
             </Button>
@@ -3022,60 +2959,6 @@ export function AnalysisPage() {
             “进入复核”只静音并保留待办；“完成复核并归档”会解除警报并保存结论。规则等级始终由真实相对偏移计算，人工复核不会覆盖或降低测值等级。解除后需回到倾角基线 {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}° 内并保持 {String(fieldAlarmReviewData.thresholds.recoveryPoints)} 个上报点，规则才会自动重新布防。
           </div>
           {fieldAlarmReviewError ? <div className="desk-analysis-review-error">{fieldAlarmReviewError}</div> : null}
-        </div>
-      </Modal>
-
-      <Modal
-        centered
-        className="desk-analysis-review-modal desk-analysis-review-archive-modal"
-        open={reviewArchiveOpen}
-        title="倾角复核档案"
-        width={860}
-        footer={null}
-        onCancel={() => setReviewArchiveOpen(false)}
-      >
-        <div className="desk-analysis-review-archive">
-          <div className="desk-analysis-review-archive-summary">
-            <div>
-              <span>已归档</span>
-              <strong>{reviewArchiveItems.length}</strong>
-            </div>
-            <p>这里只展示服务器中状态为 resolved 的真实倾角告警。每条记录保留生命周期事件、最终等级、复核时间和人工结论。</p>
-          </div>
-          {reviewArchiveLoading ? (
-            <div className="desk-analysis-review-archive-empty">正在读取复核档案…</div>
-          ) : reviewArchiveError ? (
-            <div className="desk-analysis-review-error">{reviewArchiveError}</div>
-          ) : reviewArchiveItems.length ? (
-            <div className="desk-analysis-review-archive-list">
-              {reviewArchiveItems.map((item) => {
-                const deviceName = item.alert.deviceId
-                  ? devices.find((device) => device.id === item.alert.deviceId)?.name ?? item.alert.deviceId
-                  : "未绑定节点";
-                return (
-                  <div key={item.alert.alertId} className="desk-analysis-review-archive-item">
-                    <div className="desk-analysis-review-archive-item-head">
-                      <div>
-                        <Tag color={item.alert.severity === "critical" ? "red" : "orange"}>
-                          {alertSeverityLabel(item.alert.severity)}
-                        </Tag>
-                        <strong>{item.alert.title || "倾角告警"}</strong>
-                      </div>
-                      <span>{formatBeijingDateTime(item.resolvedAt)}</span>
-                    </div>
-                    <p>{item.note}</p>
-                    <div className="desk-analysis-review-archive-meta">
-                      <span>节点 {deviceName}</span>
-                      <span>生命周期 {item.eventCount} 条</span>
-                      <span title={item.alert.alertId}>编号 {item.alert.alertId}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="desk-analysis-review-archive-empty">当前没有已完成并归档的倾角复核记录。</div>
-          )}
         </div>
       </Modal>
 

@@ -738,112 +738,6 @@
   font-weight: 800;
 }
 
-.desk-analysis-review-archive {
-  display: grid;
-  gap: 12px;
-}
-
-.desk-analysis-review-archive-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-}
-
-.desk-analysis-review-archive-summary > div {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.desk-analysis-review-archive-summary span,
-.desk-analysis-review-archive-summary p {
-  color: rgba(148, 163, 184, 0.82);
-  font-size: 12px;
-}
-
-.desk-analysis-review-archive-summary strong {
-  color: #22d3ee;
-  font-size: 24px;
-  font-variant-numeric: tabular-nums;
-}
-
-.desk-analysis-review-archive-summary p {
-  margin: 0;
-  line-height: 1.5;
-}
-
-.desk-analysis-review-archive-list {
-  display: grid;
-  gap: 8px;
-}
-
-.desk-analysis-review-archive-item {
-  padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.42);
-}
-
-.desk-analysis-review-archive-item-head,
-.desk-analysis-review-archive-item-head > div,
-.desk-analysis-review-archive-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.desk-analysis-review-archive-item-head {
-  justify-content: space-between;
-}
-
-.desk-analysis-review-archive-item-head > div {
-  min-width: 0;
-}
-
-.desk-analysis-review-archive-item-head strong {
-  overflow: hidden;
-  color: rgba(248, 250, 252, 0.96);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desk-analysis-review-archive-item-head > span,
-.desk-analysis-review-archive-meta {
-  color: rgba(148, 163, 184, 0.78);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.desk-analysis-review-archive-item > p {
-  margin: 8px 0;
-  color: rgba(226, 232, 240, 0.9);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.desk-analysis-review-archive-meta {
-  flex-wrap: wrap;
-}
-
-.desk-analysis-review-archive-meta span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desk-analysis-review-archive-empty {
-  display: grid;
-  min-height: 140px;
-  place-items: center;
-  color: rgba(148, 163, 184, 0.82);
-  font-size: 13px;
-}
-
 @media (max-width: 760px) {
   .desk-analysis-review-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -858,8 +752,7 @@
     border-bottom: 1px solid rgba(248, 113, 113, 0.16);
   }
 
-  .desk-analysis-review-conclusion,
-  .desk-analysis-review-archive-summary {
+  .desk-analysis-review-conclusion {
     grid-template-columns: 1fr;
   }
 }
