@@ -1,7 +1,7 @@
 import { App as AntApp, Button, Card, Col, Input, Modal, Row, Select, Skeleton, Space, Switch, Table, Tag, Typography } from "antd";
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type {
@@ -286,7 +286,7 @@ function HermesVolatilityThreeSurface({
     if (!interactionActiveRef.current) setSurface(incomingSurface);
   }, [incomingSurface]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const mount = mountRef.current;
     if (!mount) return undefined;
 
@@ -303,6 +303,8 @@ function HermesVolatilityThreeSurface({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.domElement.style.backgroundColor = "#030712";
+    renderer.domElement.style.setProperty("-webkit-tap-highlight-color", "transparent");
     mount.appendChild(renderer.domElement);
 
     const ambient = new THREE.AmbientLight(0xa7d8ff, 0.68);
