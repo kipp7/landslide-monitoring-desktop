@@ -211,6 +211,18 @@ export type AlertStreamEvent = {
   createdAt: string;
 };
 
+export type AlertLifecycleEvent = {
+  eventId: string;
+  eventType: "ALERT_TRIGGER" | "ALERT_UPDATE" | "ALERT_ACK" | "ALERT_RESOLVE";
+  severity: AlertSeverity;
+  createdAt: string;
+  ruleId: string;
+  ruleVersion: number;
+  deviceId: string | null;
+  stationId: string | null;
+  evidence: Record<string, unknown>;
+};
+
 export type CompetitionTiltVector = { x: number; y: number; z: number };
 
 export type CompetitionTiltProfile = {
@@ -795,6 +807,7 @@ export type ApiClient = {
       pagination: { page: number; pageSize: number; total: number; totalPages: number };
       summary: { active: number; acked: number; resolved: number; high: number; critical: number };
     }>;
+    getEvents: (alertId: string) => Promise<{ alertId: string; events: AlertLifecycleEvent[] }>;
     subscribe: (handlers: {
       onEvent: (event: AlertStreamEvent) => void;
       onError?: (error: Error) => void;

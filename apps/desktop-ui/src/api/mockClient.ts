@@ -2019,6 +2019,27 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
           },
         };
       },
+      async getEvents(alertId) {
+        await afterDelay("alerts.getEvents");
+        const alert = makeMockFieldAlarmStatus(fieldAlarmAction).latestAlert;
+        if (!alert || alert.alertId !== alertId) return { alertId, events: [] };
+        return {
+          alertId,
+          events: [
+            {
+              eventId: `mock-event-${alertId}`,
+              eventType: alert.status === "acked" ? "ALERT_ACK" as const : "ALERT_TRIGGER" as const,
+              severity: alert.severity,
+              createdAt: alert.lastEventAt,
+              ruleId: alert.ruleId,
+              ruleVersion: alert.ruleVersion,
+              deviceId: alert.deviceId,
+              stationId: alert.stationId,
+              evidence: alert.evidence ?? {},
+            },
+          ],
+        };
+      },
       subscribe() {
         return () => undefined;
       },

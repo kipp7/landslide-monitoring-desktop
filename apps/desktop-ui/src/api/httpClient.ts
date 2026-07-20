@@ -3,6 +3,7 @@ import type {
   AccountRole,
   AccountUser,
   AccountUserListResponse,
+  AlertLifecycleEvent,
   AlertStreamEvent,
   AiPrediction,
   CompetitionTiltProfile,
@@ -1142,6 +1143,11 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           pagination: { page: number; pageSize: number; total: number; totalPages: number };
           summary: { active: number; acked: number; resolved: number; high: number; critical: number };
         }>(`/api/v1/alerts?${params.toString()}`);
+      },
+      async getEvents(alertId) {
+        return transport.requestV1<{ alertId: string; events: AlertLifecycleEvent[] }>(
+          `/api/v1/alerts/${encodeURIComponent(alertId)}/events`
+        );
       },
       subscribe: subscribeToAlerts,
     },

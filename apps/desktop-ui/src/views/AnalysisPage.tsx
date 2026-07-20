@@ -5,7 +5,15 @@ import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import type { Device, DeviceStateSnapshot, Station, TelemetrySeriesPoint } from "../api/client";
+import type {
+  AlertLifecycleEvent,
+  AlertSeverity,
+  CompetitionTiltVector,
+  Device,
+  DeviceStateSnapshot,
+  Station,
+  TelemetrySeriesPoint
+} from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { MapSwitchPanel, type MapType } from "../components/MapSwitchPanel";
@@ -80,6 +88,29 @@ function readMetricNumber(metrics: Record<string, unknown> | undefined, key: str
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function readTiltVector(value: unknown): CompetitionTiltVector | null {
+  const record = asRecord(value);
+  const x = readMetricNumber(record, "x");
+  const y = readMetricNumber(record, "y");
+  const z = readMetricNumber(record, "z");
+  return x == null || y == null || z == null ? null : { x, y, z };
+}
+
+function formatTiltValue(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}°` : "--";
+}
+
+function alertSeverityLabel(severity: AlertSeverity | undefined): string {
+  if (severity === "critical") return "严重风险";
+  if (severity === "high") return "高风险";
+  if (severity === "medium") return "中风险";
+  return severity === "low" ? "低风险" : "未判定";
 }
 
 function readMetricBoolean(metrics: Record<string, unknown> | undefined, key: string): boolean {
@@ -798,6 +829,7 @@ export function AnalysisPage() {
   const [fieldAlarmReviewNote, setFieldAlarmReviewNote] = useState("现场复核确认，解除声光报警。");
   const [fieldAlarmReviewSubmitting, setFieldAlarmReviewSubmitting] = useState(false);
   const [fieldAlarmReviewError, setFieldAlarmReviewError] = useState("");
+  const [fieldAlarmEvents, setFieldAlarmEvents] = useState<AlertLifecycleEvent[]>([]);
   const [competitionSetupOpen, setCompetitionSetupOpen] = useState(false);
   const [competitionCaptureBusy, setCompetitionCaptureBusy] = useState(false);
   const [competitionCaptureError, setCompetitionCaptureError] = useState("");
@@ -2328,6 +2360,81 @@ export function AnalysisPage() {
     return devices.find((device) => device.id === deviceId)?.name ?? deviceId;
   }, [devices, fieldAlarmStatus?.latestAlert?.deviceId]);
 
+  useEffect(() => {
+    if (!fieldAlarmReviewOpen || !fieldAlarmAlertId) {
+      setFieldAlarmEvents([]);
+      return;
+    }
+    let cancelled = false;
+    void api.alerts
+      .getEvents(fieldAlarmAlertId)
+      .then((result) => {
+        if (!cancelled) setFieldAlarmEvents(result.events);
+      })
+      .catch(() => {
+        if (!cancelled) setFieldAlarmEvents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, fieldAlarmAlertId, fieldAlarmReviewOpen]);
+
+  const fieldAlarmReviewData = useMemo(() => {
+    const alert = fieldAlarmStatus?.latestAlert ?? null;
+    const profile = fieldAlarmStatus?.competitionProfile ?? null;
+    const deviceId = alert?.deviceId ?? null;
+    const evidenceEvent = fieldAlarmEvents
+      .filter((event) => event.eventType === "ALERT_TRIGGER" || event.eventType === "ALERT_UPDATE")
+      .slice()
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+    const evidence = asRecord(evidenceEvent?.evidence ?? alert?.evidence);
+    const live = profile?.live?.find((item) => item.deviceId === deviceId)?.deviation ?? null;
+    const profileDevice = profile?.devices.find((item) => item.deviceId === deviceId) ?? null;
+    const baseline = readTiltVector(evidence.baseline) ?? live?.baseline ?? profileDevice?.baseline ?? null;
+    const current = readTiltVector(evidence.current) ?? live?.current ?? null;
+    const delta = readTiltVector(evidence.delta) ?? live?.delta ?? null;
+    const thresholdsEvidence = asRecord(evidence.thresholds);
+    const thresholds = {
+      highDeg: readMetricNumber(thresholdsEvidence, "highDeg") ?? profile?.thresholds.highDeg ?? 3,
+      criticalDeg: readMetricNumber(thresholdsEvidence, "criticalDeg") ?? profile?.thresholds.criticalDeg ?? 7,
+      recoveryDeg: readMetricNumber(thresholdsEvidence, "recoveryDeg") ?? profile?.thresholds.recoveryDeg ?? 1.5,
+      recoveryPoints: readMetricNumber(thresholdsEvidence, "recoveryPoints") ?? profile?.thresholds.recoveryPoints ?? 2,
+    };
+    const maxDeviationDeg = readMetricNumber(evidence, "maxDeviationDeg") ?? live?.maxDeviationDeg ?? null;
+    const maxAxisRaw = typeof evidence.maxAxis === "string" ? evidence.maxAxis.toLowerCase() : live?.maxAxis;
+    const maxAxis = maxAxisRaw === "x" || maxAxisRaw === "y" || maxAxisRaw === "z" ? maxAxisRaw.toUpperCase() : "--";
+    const triggerThreshold = alert?.severity === "critical" ? thresholds.criticalDeg : thresholds.highDeg;
+    const firstTriggerAt = fieldAlarmEvents
+      .filter((event) => event.eventType === "ALERT_TRIGGER")
+      .slice()
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0]?.createdAt ?? alert?.lastEventAt ?? null;
+    const tongxiao = asRecord(fieldAlarmStatus?.actuator.tongxiao);
+    const reported = asRecord(tongxiao.reported);
+    const boardOnline = tongxiao.boardOnline === true;
+    const actuatorState = typeof reported.state === "string"
+      ? reported.state
+      : typeof fieldAlarmStatus?.actuator.state === "string"
+        ? fieldAlarmStatus.actuator.state
+        : "unknown";
+
+    return {
+      alert,
+      baseline,
+      current,
+      delta,
+      thresholds,
+      maxDeviationDeg,
+      maxAxis,
+      triggerThreshold,
+      exceededBy: maxDeviationDeg == null ? null : Math.max(0, maxDeviationDeg - triggerThreshold),
+      firstTriggerAt,
+      boardOnline,
+      actuatorState,
+      concurrentAlerts: Math.max(0, (fieldAlarmStatus?.alerts.length ?? 0) - 1),
+      eventCount: fieldAlarmEvents.length,
+    };
+  }, [fieldAlarmEvents, fieldAlarmStatus]);
+
   const openCompetitionSetup = () => {
     setCompetitionThresholds(fieldAlarmStatus?.competitionProfile?.thresholds ?? DEFAULT_COMPETITION_THRESHOLDS);
     setCompetitionCaptureError("");
@@ -2641,7 +2748,7 @@ export function AnalysisPage() {
         className="desk-analysis-review-modal"
         open={fieldAlarmReviewOpen}
         title="人工确认复核"
-        width={560}
+        width={760}
         onCancel={() => {
           if (!fieldAlarmReviewSubmitting) setFieldAlarmReviewOpen(false);
         }}
@@ -2670,6 +2777,56 @@ export function AnalysisPage() {
         ]}
       >
         <div className="desk-analysis-review-body">
+          <div className="desk-analysis-review-alert">
+            <div className="desk-analysis-review-alert-head">
+              <Tag color={fieldAlarmReviewData.alert?.severity === "critical" ? "red" : "volcano"}>
+                {alertSeverityLabel(fieldAlarmReviewData.alert?.severity)}
+              </Tag>
+              <span title={fieldAlarmReviewData.alert?.alertId ?? undefined}>
+                告警编号 {fieldAlarmReviewData.alert?.alertId ?? "未记录"}
+              </span>
+            </div>
+            <strong>{fieldAlarmReviewData.alert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}</strong>
+            <p>{fieldAlarmReviewData.alert?.message || "真实监测数据达到告警阈值，请复核现场姿态与设备状态。"}</p>
+          </div>
+
+          <div className="desk-analysis-review-deviation">
+            <div className="desk-analysis-review-deviation-main">
+              <span>最大相对偏移</span>
+              <strong>
+                {fieldAlarmReviewData.maxDeviationDeg == null
+                  ? "--"
+                  : `${fieldAlarmReviewData.maxDeviationDeg.toFixed(2)}°`}
+              </strong>
+              <small>
+                主变化轴 {fieldAlarmReviewData.maxAxis} · 超出当前等级阈值 {fieldAlarmReviewData.exceededBy == null ? "--" : `${fieldAlarmReviewData.exceededBy.toFixed(2)}°`}
+              </small>
+            </div>
+            <div className="desk-analysis-review-thresholds">
+              <div><span>高风险阈值</span><strong>{fieldAlarmReviewData.thresholds.highDeg.toFixed(1)}°</strong></div>
+              <div><span>严重风险阈值</span><strong>{fieldAlarmReviewData.thresholds.criticalDeg.toFixed(1)}°</strong></div>
+              <div><span>恢复范围</span><strong>≤ {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}°</strong></div>
+            </div>
+          </div>
+
+          <div className="desk-analysis-review-vectors" aria-label="倾角基线、当前值和偏移">
+            <div className="desk-analysis-review-vector-row is-head">
+              <span>姿态</span><span>X 轴</span><span>Y 轴</span><span>Z 轴</span>
+            </div>
+            {[
+              { label: "采集基线", value: fieldAlarmReviewData.baseline },
+              { label: "触发姿态", value: fieldAlarmReviewData.current },
+              { label: "相对偏移", value: fieldAlarmReviewData.delta },
+            ].map((row) => (
+              <div key={row.label} className="desk-analysis-review-vector-row">
+                <strong>{row.label}</strong>
+                <span>{formatTiltValue(row.value?.x)}</span>
+                <span>{formatTiltValue(row.value?.y)}</span>
+                <span>{formatTiltValue(row.value?.z)}</span>
+              </div>
+            ))}
+          </div>
+
           <div className="desk-analysis-review-grid">
             <div>
               <span>区域</span>
@@ -2684,22 +2841,38 @@ export function AnalysisPage() {
               <strong>{fieldAlarmStatus?.active ? "现场声光报警中" : fieldAlarmStatus?.silenced ? "已静音待复核" : "正常"}</strong>
             </div>
             <div>
+              <span>首次触发</span>
+              <strong>{fieldAlarmReviewData.firstTriggerAt ? formatBeijingDateTime(fieldAlarmReviewData.firstTriggerAt) : "未记录"}</strong>
+            </div>
+            <div>
               <span>最近事件</span>
               <strong>{fieldAlarmLastEventAt ? formatBeijingDateTime(fieldAlarmLastEventAt) : "未记录"}</strong>
             </div>
+            <div>
+              <span>现场终端</span>
+              <strong>{fieldAlarmReviewData.boardOnline ? `RK2206 在线 · ${fieldAlarmReviewData.actuatorState}` : "RK2206 离线"}</strong>
+            </div>
+            <div>
+              <span>其它待处理告警</span>
+              <strong>{fieldAlarmReviewData.concurrentAlerts} 条</strong>
+            </div>
+            <div>
+              <span>生命周期事件</span>
+              <strong>{fieldAlarmReviewData.eventCount > 0 ? `${fieldAlarmReviewData.eventCount} 条` : "读取中"}</strong>
+            </div>
           </div>
-          <div className="desk-analysis-review-alert">
-            {fieldAlarmStatus?.latestAlert?.title || "Tongxiao RK2206 告警终端动作状态已由平台捕获"}
-          </div>
-          <Input.TextArea
-            rows={3}
-            value={fieldAlarmReviewNote}
-            maxLength={500}
-            showCount
-            onChange={(event) => setFieldAlarmReviewNote(event.target.value)}
-          />
+          <label className="desk-analysis-review-note">
+            <span>复核记录</span>
+            <Input.TextArea
+              rows={3}
+              value={fieldAlarmReviewNote}
+              maxLength={500}
+              showCount
+              onChange={(event) => setFieldAlarmReviewNote(event.target.value)}
+            />
+          </label>
           <div className="desk-analysis-review-hint">
-            提交后会写入告警生命周期事件和操作日志；解除后需回到倾角基线恢复范围并保持两个上报点，规则才会自动重新布防。
+            解除后需回到倾角基线 {fieldAlarmReviewData.thresholds.recoveryDeg.toFixed(1)}° 内并保持 {String(fieldAlarmReviewData.thresholds.recoveryPoints)} 个上报点，规则才会自动重新布防。复核操作会写入告警生命周期和操作日志。
           </div>
           {fieldAlarmReviewError ? <div className="desk-analysis-review-error">{fieldAlarmReviewError}</div> : null}
         </div>
