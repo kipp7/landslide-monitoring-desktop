@@ -567,14 +567,14 @@ function HermesVolatilityThreeSurface({
       },
       {
         label: "Y",
-        direction: new THREE.Vector3(0, 1, 0),
-        length: 0.18 + 142 * yScale,
+        direction: new THREE.Vector3(0, 0, 1),
+        length: zOffset * 2 + 0.76,
         color: 0x4ade80
       },
       {
         label: "Z",
-        direction: new THREE.Vector3(0, 0, 1),
-        length: zOffset * 2 + 0.76,
+        direction: new THREE.Vector3(0, 1, 0),
+        length: 0.18 + 142 * yScale,
         color: 0x60a5fa
       }
     ] as const;
