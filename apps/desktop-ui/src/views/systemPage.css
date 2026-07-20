@@ -480,9 +480,11 @@
   min-width: 0;
   padding: 9px 11px;
   background: rgba(6, 13, 25, 0.96);
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 24px max-content;
   gap: 2px 8px;
+  place-content: center;
   align-items: center;
+  text-align: center;
 }
 
 .system-page-surface-guide-axis b {
