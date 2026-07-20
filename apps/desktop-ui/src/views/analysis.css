@@ -281,7 +281,7 @@
   font-weight: 800;
 }
 
-.desk-analysis-field-alarm-meta span {
+.desk-analysis-field-alarm-meta > span {
   padding: 5px 8px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.28);

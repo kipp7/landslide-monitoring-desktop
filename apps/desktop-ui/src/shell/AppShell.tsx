@@ -3,11 +3,12 @@ import { App as AntApp, Button, Modal, Tag } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
-import type { AlertSummaryItem, FieldAlarmStatus } from "../api/client";
+import type { AlertSummaryItem } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { HoverSidebar } from "../components/HoverSidebar";
 import { useAuthStore } from "../stores/authStore";
+import { useFieldAlarmStore } from "../stores/fieldAlarmStore";
 import "./shell.css";
 
 function evidenceRecord(value: unknown): Record<string, unknown> {
@@ -39,7 +40,10 @@ export function AppShell() {
   const user = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clear);
   const isAnalysis = location.pathname.startsWith("/app/analysis");
-  const [alarmStatus, setAlarmStatus] = useState<FieldAlarmStatus | null>(null);
+  const alarmStatus = useFieldAlarmStore((state) => state.status);
+  const setAlarmStatus = useFieldAlarmStore((state) => state.setStatus);
+  const applyAlarmActionResult = useFieldAlarmStore((state) => state.applyActionResult);
+  const resetAlarmStatus = useFieldAlarmStore((state) => state.reset);
   const [alarmModalOpen, setAlarmModalOpen] = useState(false);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [alarmAction, setAlarmAction] = useState<"ack" | "resolve" | null>(null);
@@ -60,7 +64,7 @@ export function AppShell() {
     } catch {
       // The realtime stream reconnects independently; retain the last known alert state.
     }
-  }, [api]);
+  }, [api, setAlarmStatus]);
 
   useEffect(() => {
     void refreshAlarmStatus({ open: true });
@@ -102,8 +106,22 @@ export function AppShell() {
             : "Windows 值守端已完成现场复核，确认解除当前告警。",
       });
       if (!result.accepted) throw new Error(result.actuator.lastError ?? "现场告警终端未接受命令");
-      await refreshAlarmStatus({ open: action === "ack" });
-      message.success(action === "ack" ? "已静音，告警保留待复核" : "告警已解除");
+      applyAlarmActionResult(result, selectedAlert.alertId);
+      if (action === "resolve") {
+        const remainingAlert = alarmStatus?.alerts.find((alert) => alert.alertId !== selectedAlert.alertId) ?? null;
+        setSelectedAlertId(remainingAlert?.alertId ?? null);
+        setAlarmModalOpen(Boolean(remainingAlert));
+      }
+      void refreshAlarmStatus();
+      if (action === "ack") {
+        message.success("已静音，告警保留待复核");
+      } else {
+        const thresholds = alarmStatus?.competitionProfile?.thresholds;
+        message.success(
+          `告警已解除。回到倾角基线 ${String(thresholds?.recoveryDeg ?? 1.5)}° 内连续 ${String(thresholds?.recoveryPoints ?? 2)} 个点后自动重新布防。`,
+          6
+        );
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : "告警操作失败");
     } finally {
@@ -124,6 +142,7 @@ export function AppShell() {
         } catch (err) {
           message.error((err as Error).message);
         } finally {
+          resetAlarmStatus();
           clearAuth();
           navigate("/login");
         }
