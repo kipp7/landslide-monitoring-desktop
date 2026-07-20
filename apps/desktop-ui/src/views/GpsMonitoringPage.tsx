@@ -17,7 +17,7 @@ import {
   Tabs,
   Typography
 } from "antd";
-import { ExportOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
+import { BarsOutlined, DatabaseOutlined, ExportOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +26,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import type { AiPrediction, Baseline, Device, GpsDerivedAnalysis, GpsSeries, TelemetrySeriesPoint } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
+import { GpsCoordinateMap } from "../components/GpsCoordinateMap";
 import { formatBeijingDateTime, formatBeijingMonthDay, formatBeijingMonthDayTime, formatBeijingTime } from "../utils/beijingTime";
 import { isFormalGnssDevice } from "../utils/deviceCapabilities";
 import { buildGpsAnalysisExport, buildGpsChartExport, buildGpsCsvExport, buildGpsReportExport, triggerPreparedExport } from "./gpsMonitoringExport";
@@ -67,23 +68,14 @@ type GpsChartRow = {
   lng: number | null;
 };
 
-function daysFromRange(range: TimeRange) {
-  if (range === "1h") return 1;
-  if (range === "6h") return 1;
-  if (range === "24h") return 1;
-  if (range === "7d") return 7;
-  if (range === "15d") return 15;
-  return 30;
-}
-
-function computeTelemetryWindow(range: TimeRange): { startTime: string; endTime: string; interval: "5m" | "1h" | "1d" } {
+function computeTelemetryWindow(range: TimeRange): { startTime: string; endTime: string; interval: "1m" | "5m" | "1h" | "1d" } {
   const end = new Date();
   const start = new Date(end);
-  let interval: "5m" | "1h" | "1d" = "1h";
+  let interval: "1m" | "5m" | "1h" | "1d" = "1h";
 
   if (range === "1h") {
     start.setHours(start.getHours() - 1);
-    interval = "5m";
+    interval = "1m";
   } else if (range === "6h") {
     start.setHours(start.getHours() - 6);
     interval = "5m";
@@ -95,13 +87,22 @@ function computeTelemetryWindow(range: TimeRange): { startTime: string; endTime:
     interval = "1h";
   } else if (range === "15d") {
     start.setDate(start.getDate() - 15);
-    interval = "1d";
+    interval = "1h";
   } else {
     start.setDate(start.getDate() - 30);
     interval = "1d";
   }
 
   return { startTime: start.toISOString(), endTime: end.toISOString(), interval };
+}
+
+function expectedAggregatedPoints(range: TimeRange): number {
+  if (range === "1h") return 60;
+  if (range === "6h") return 72;
+  if (range === "24h") return 288;
+  if (range === "7d") return 168;
+  if (range === "15d") return 360;
+  return 30;
 }
 
 function bucketKey(ts: string, range: TimeRange): string {
@@ -321,7 +322,8 @@ function buildRawGpsSeriesFromTelemetry(
           dispMm: horizontalMm,
           horizontalMm,
           latitude: Number(coords.lat.toFixed(6)),
-          longitude: Number(coords.lng.toFixed(6))
+          longitude: Number(coords.lng.toFixed(6)),
+          sampleCount: 1
         };
       })
     },
@@ -466,7 +468,6 @@ export function GpsMonitoringPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const days = daysFromRange(timeRange);
       const telemetryWindow = computeTelemetryWindow(timeRange);
       let nextSeries: GpsSeries;
       let nextDerivedAnalysis: GpsDerivedAnalysis | null = null;
@@ -494,7 +495,13 @@ export function GpsMonitoringPage() {
       };
 
       try {
-        nextSeries = await api.gps.getSeries({ deviceId: selectedDeviceId, days });
+        nextSeries = await api.gps.getSeries({
+          deviceId: selectedDeviceId,
+          startTime: telemetryWindow.startTime,
+          endTime: telemetryWindow.endTime,
+          interval: telemetryWindow.interval,
+          limit: dataLimit
+        });
         if (!nextSeries.points.length) {
           const rawGps = await loadRawGpsSeries();
           nextSeries = rawGps.series;
@@ -594,6 +601,17 @@ export function GpsMonitoringPage() {
     : temporaryReferencePoint;
 
   const pts = series?.points ?? [];
+  const rawGpsSampleCount = useMemo(
+    () => pts.reduce((sum, point) => sum + Math.max(1, point.sampleCount ?? 1), 0),
+    [pts]
+  );
+  const seriesIntervalText = useMemo(() => {
+    const interval = computeTelemetryWindow(timeRange).interval;
+    if (interval === "1m") return "1 分钟聚合";
+    if (interval === "5m") return "5 分钟聚合";
+    if (interval === "1h") return "1 小时聚合";
+    return "1 天聚合";
+  }, [timeRange]);
 
   const chartData: GpsChartRow[] = useMemo(() => {
     const temperatureByBucket = new Map<string, number>();
@@ -682,10 +700,10 @@ export function GpsMonitoringPage() {
               : "未选择";
 
   const quality = useMemo(() => {
-    const expected = Math.min(200, daysFromRange(timeRange) * 24);
+    const expected = Math.min(dataLimit, expectedAggregatedPoints(timeRange));
     const score = expected > 0 ? Math.min(1, pts.length / expected) : 0;
     return { score, pct: Number((score * 100).toFixed(1)) };
-  }, [pts.length, timeRange]);
+  }, [dataLimit, pts.length, timeRange]);
 
   const displacementOption = useMemo(() => {
     return {
@@ -799,62 +817,6 @@ export function GpsMonitoringPage() {
       ]
     };
   }, [chartData]);
-
-  const coordOption = useMemo(() => {
-    const baseLat = referencePoint?.lat ?? latest?.lat ?? chartData[0]?.lat ?? 22.684674;
-    const baseLng = referencePoint?.lng ?? latest?.lng ?? chartData[0]?.lng ?? 110.189371;
-    const curLat = latest?.lat ?? null;
-    const curLng = latest?.lng ?? null;
-    const referenceLabel = referencePoint?.source === "temporary" ? "临时参考点" : "基线点";
-
-    const pad = 0.00008;
-    const minLng = Math.min(baseLng, ...(curLng == null ? [] : [curLng])) - pad;
-    const maxLng = Math.max(baseLng, ...(curLng == null ? [] : [curLng])) + pad;
-    const minLat = Math.min(baseLat, ...(curLat == null ? [] : [curLat])) - pad;
-    const maxLat = Math.max(baseLat, ...(curLat == null ? [] : [curLat])) + pad;
-    const points = [
-      {
-        name: referenceLabel,
-        value: [baseLng, baseLat] as [number, number],
-        symbolSize: 16,
-        itemStyle: { color: "#22c55e", shadowBlur: 12, shadowColor: "rgba(34, 211, 238, 0.18)" }
-      },
-      ...(curLat != null && curLng != null
-        ? [
-            {
-              name: "最新点",
-              value: [curLng, curLat] as [number, number],
-              symbolSize: 18,
-              itemStyle: { color: riskColor(level), shadowBlur: 14, shadowColor: "rgba(34, 211, 238, 0.22)" }
-            }
-          ]
-        : [])
-    ];
-
-    return {
-      backgroundColor: "transparent",
-      textStyle: { color: "rgba(226, 232, 240, 0.9)" },
-      tooltip: {
-        trigger: "item",
-        backgroundColor: "rgba(15, 23, 42, 0.92)",
-        borderColor: "rgba(148, 163, 184, 0.22)",
-        textStyle: { color: "rgba(226, 232, 240, 0.92)" },
-        formatter: (p: { data: { name: string; value: [number, number] } }) => {
-          const [lng, lat] = p.data.value;
-          return `${p.data.name}<br/>纬度：${lat.toFixed(6)}<br/>经度：${lng.toFixed(6)}`;
-        }
-      },
-      grid: { left: 10, right: 10, top: 10, bottom: 10 },
-      xAxis: { type: "value", min: minLng, max: maxLng, show: false },
-      yAxis: { type: "value", min: minLat, max: maxLat, show: false },
-      series: [
-        {
-          type: "scatter",
-          data: points
-        }
-      ]
-    };
-  }, [chartData, latest?.lat, latest?.lng, level, referencePoint]);
 
   const ceemdMetrics = useMemo(() => {
     if (!derivedAnalysis?.ceemd) return null;
@@ -1106,11 +1068,11 @@ export function GpsMonitoringPage() {
             />
 
             <Button
-              type={autoRefresh ? "primary" : "default"}
+              className={`desk-gps-toolbtn${autoRefresh ? " active" : ""}`}
               icon={<ReloadOutlined spin={autoRefresh} />}
               onClick={() => setAutoRefresh((v) => !v)}
             >
-              {autoRefresh ? "停止" : "刷新"}
+              {autoRefresh ? "停止刷新" : "自动刷新"}
             </Button>
 
             <Dropdown
@@ -1167,29 +1129,32 @@ export function GpsMonitoringPage() {
               placement="bottomLeft"
               trigger={["click"]}
             >
-              <Button icon={<ExportOutlined />}>导出</Button>
+              <Button className="desk-gps-toolbtn" icon={<ExportOutlined />}>导出</Button>
             </Dropdown>
 
             <Button
+              className="desk-gps-toolbtn"
               icon={<SettingOutlined />}
               onClick={() => {
                 form.setFieldsValue(thresholds);
                 setShowSettings(true);
               }}
             >
-              设置
+              阈值设置
             </Button>
 
             <Button
+              className="desk-gps-toolbtn"
+              icon={<BarsOutlined />}
               onClick={() => {
                 limitForm.setFieldsValue({ limit: dataLimit });
                 setShowLimit(true);
               }}
             >
-              点数设置
+              数据点数
             </Button>
 
-            <Button className="desk-gps-baseline-btn" onClick={() => navigate("/app/device-management?tab=baselines")}>
+            <Button className="desk-gps-toolbtn" icon={<DatabaseOutlined />} onClick={() => navigate("/app/device-management?tab=baselines")}>
               基线管理
             </Button>
             </Space>
@@ -1300,7 +1265,7 @@ export function GpsMonitoringPage() {
         </div>
 
         <div className="desk-gps-stat">
-          <div className="desk-gps-stat-label">数据点数</div>
+          <div className="desk-gps-stat-label">有效聚合点</div>
           <div className="desk-gps-stat-main">
             <span className="desk-gps-stat-value" style={{ color: "rgba(96,165,250,0.95)" }}>
               {chartData.length}
@@ -1308,7 +1273,7 @@ export function GpsMonitoringPage() {
             <span className="desk-gps-stat-unit">条</span>
           </div>
           <div className="desk-gps-stat-sub">
-            范围：{timeRange.toUpperCase()} · 上限：{dataLimit}
+            {seriesIntervalText} · 原始坐标 {rawGpsSampleCount} 组 · 上限 {dataLimit}
           </div>
         </div>
       </div>
@@ -1381,10 +1346,10 @@ export function GpsMonitoringPage() {
                     </BaseCard>
                   </Col>
                   <Col span={24}>
-                    <BaseCard title="基线 / 最新坐标">
+                    <BaseCard title="定位基线与最新位置">
                       <div className="desk-gps-coord">
                         <div className="desk-gps-coord-kv">
-                          <div className="desk-gps-coord-title">定位坐标</div>
+                          <div className="desk-gps-coord-title">定位对比</div>
                           <div className="desk-gps-coord-row">
                             <span className="desk-gps-coord-k">{baseline ? "基线" : "参考点"}</span>
                             <span className="desk-gps-coord-v">
@@ -1410,20 +1375,32 @@ export function GpsMonitoringPage() {
                             </span>
                           </div>
                           <div className="desk-gps-coord-row">
-                            <span className="desk-gps-coord-k">风险</span>
+                            <span className="desk-gps-coord-k">平面距离</span>
+                            <span className="desk-gps-coord-v">{formatOptionalNumber(latest?.horizontal, 2)} mm</span>
+                          </div>
+                          <div className="desk-gps-coord-row">
+                            <span className="desk-gps-coord-k">采集时间</span>
+                            <span className="desk-gps-coord-v">{latest ? formatBeijingDateTime(latest.ts) : "--"}</span>
+                          </div>
+                          <div className="desk-gps-coord-row">
+                            <span className="desk-gps-coord-k">状态</span>
                             <span className="desk-gps-coord-v">
                               <Tag color={riskColor(level)} style={{ fontWeight: 800, marginInlineEnd: 0 }}>
                                 {riskDesc(level)}
                               </Tag>
                             </span>
                           </div>
-                          <div className="desk-gps-coord-tip">{referenceStatusText}。坐标图展示参考点与当前最新定位点位。</div>
+                          <div className="desk-gps-coord-tip">{referenceStatusText}</div>
                         </div>
                         <div className="desk-gps-coord-chart">
                           {loading ? (
                             <div className="desk-loading">加载中…</div>
                           ) : hasCoordData || referencePoint ? (
-                            <ReactECharts option={coordOption} style={{ height: 220 }} />
+                            <GpsCoordinateMap
+                              reference={referencePoint ? { lat: referencePoint.lat, lng: referencePoint.lng, label: referencePoint.label } : null}
+                              latest={latest?.lat != null && latest.lng != null ? { lat: latest.lat, lng: latest.lng, label: "最新位置" } : null}
+                              latestColor={riskColor(level)}
+                            />
                           ) : (
                             <div className="desk-dm-empty">当前没有可展示的定位坐标点。</div>
                           )}

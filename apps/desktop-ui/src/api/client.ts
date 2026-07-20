@@ -398,6 +398,7 @@ export type GpsPoint = {
   verticalMm?: number | null;
   latitude?: number | null;
   longitude?: number | null;
+  sampleCount?: number;
 };
 
 export type GpsSeries = {
@@ -831,7 +832,14 @@ export type ApiClient = {
     }) => Promise<CompetitionTiltProfile>;
   };
   gps: {
-    getSeries: (input: { deviceId: string; days?: number }) => Promise<GpsSeries>;
+    getSeries: (input: {
+      deviceId: string;
+      days?: number;
+      startTime?: string;
+      endTime?: string;
+      interval?: "1m" | "5m" | "1h" | "1d";
+      limit?: number;
+    }) => Promise<GpsSeries>;
     getDerivedAnalysis: (input: {
       deviceId: string;
       rangeLabel?: string;

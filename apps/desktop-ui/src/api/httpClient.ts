@@ -100,6 +100,7 @@ type V1GpsDeformationResponse = {
     verticalMeters?: number | null;
     latitude?: number | null;
     longitude?: number | null;
+    counts?: { lat?: number; lon?: number };
   }>;
 };
 
@@ -1200,9 +1201,13 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
     gps: {
       async getSeries(input) {
         const days = input.days ?? 7;
-        const range = computeTimeRange(days);
+        const fallbackRange = computeTimeRange(days);
+        const startTime = input.startTime ?? fallbackRange.startTime;
+        const endTime = input.endTime ?? fallbackRange.endTime;
+        const interval = input.interval ?? fallbackRange.interval;
+        const limitQuery = input.limit == null ? "" : `&limit=${encodeURIComponent(String(input.limit))}`;
         const res = await transport.requestV1<V1GpsDeformationResponse>(
-          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/series?startTime=${encodeURIComponent(range.startTime)}&endTime=${encodeURIComponent(range.endTime)}&interval=${encodeURIComponent(range.interval)}`
+          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/series?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&interval=${encodeURIComponent(interval)}${limitQuery}`
         );
         return {
           deviceId: res.deviceId,
@@ -1221,6 +1226,9 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
               : {}),
             ...(typeof point.longitude === "number"
               ? { longitude: Number(point.longitude.toFixed(6)) }
+              : {}),
+            ...(typeof point.counts?.lat === "number" && typeof point.counts.lon === "number"
+              ? { sampleCount: Math.min(point.counts.lat, point.counts.lon) }
               : {}),
           })),
         };
