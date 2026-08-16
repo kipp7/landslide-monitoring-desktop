@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private static readonly nint HwndTopmost = new(-1);
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
 
     private string? _devServerUrl;
@@ -164,9 +165,15 @@ public partial class MainWindow : Window
             _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowFromTray);
             _trayIcon.MouseUp += (_, e) => Dispatcher.Invoke(() =>
             {
-                if (e.Button == Forms.MouseButtons.Left || e.Button == Forms.MouseButtons.Right)
+                if (e.Button == Forms.MouseButtons.Right)
                 {
                     ToggleTrayFlyout();
+                    return;
+                }
+
+                if (e.Button == Forms.MouseButtons.Left)
+                {
+                    ShowFromTray();
                 }
             });
             _trayIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(() =>
@@ -250,38 +257,73 @@ public partial class MainWindow : Window
             }
 
             var version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "unknown";
-            var status = ShowInTaskbar ? "应用已打开" : "后台运行中";
+            var status = ShowInTaskbar ? "前台运行" : "后台托管";
             _trayFlyout.UpdateHeader(version, status);
-            PositionTrayFlyout(_trayFlyout);
+            _trayFlyout.Opacity = 0;
+            _trayFlyout.Left = 0;
+            _trayFlyout.Top = 0;
             _trayFlyout.Show();
+            PositionTrayFlyout(_trayFlyout);
+            _trayFlyout.Opacity = 1;
             _trayFlyout.Activate();
         }
         catch
         {
+            if (_trayFlyout is not null)
+            {
+                _trayFlyout.Opacity = 1;
+            }
         }
     }
 
     private static void PositionTrayFlyout(Window flyout)
     {
-        try
+        if (TryGetCursorWorkArea(out var workArea))
         {
-            flyout.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
-            flyout.Arrange(new System.Windows.Rect(flyout.DesiredSize));
-            flyout.UpdateLayout();
+            var handle = new WindowInteropHelper(flyout).Handle;
+            if (handle != nint.Zero && GetWindowRect(handle, out var flyoutRect))
+            {
+                var width = Math.Max(1, flyoutRect.Right - flyoutRect.Left);
+                var height = Math.Max(1, flyoutRect.Bottom - flyoutRect.Top);
+                var left = Math.Clamp(workArea.Right - width - 12, workArea.Left + 8, workArea.Right - width - 8);
+                var top = Math.Clamp(workArea.Bottom - height - 12, workArea.Top + 8, workArea.Bottom - height - 8);
+
+                // SetWindowPos uses physical pixels, matching the tray cursor and monitor work area.
+                SetWindowPos(handle, nint.Zero, left, top, 0, 0, SwpNoSize | SwpNoActivate | SwpShowWindow);
+                return;
+            }
         }
-        catch
+
+        // Native positioning runs after Show(). This only protects against a failed shell query.
+        var fallbackArea = SystemParameters.WorkArea;
+        var flyoutWidth = !double.IsNaN(flyout.Width) && flyout.Width > 0 ? flyout.Width : 280;
+        var flyoutHeight = !double.IsNaN(flyout.Height) && flyout.Height > 0 ? flyout.Height : 340;
+        flyout.Left = Math.Max(fallbackArea.Left + 8, fallbackArea.Right - flyoutWidth - 12);
+        flyout.Top = Math.Max(fallbackArea.Top + 8, fallbackArea.Bottom - flyoutHeight - 12);
+    }
+
+    private static bool TryGetCursorWorkArea(out RECT workArea)
+    {
+        workArea = default;
+        if (!GetCursorPos(out var cursor))
         {
+            return false;
         }
 
-        var workArea = SystemParameters.WorkArea;
-        var flyoutWidth = !double.IsNaN(flyout.Width) && flyout.Width > 0 ? flyout.Width : flyout.DesiredSize.Width;
-        var flyoutHeight = !double.IsNaN(flyout.Height) && flyout.Height > 0 ? flyout.Height : flyout.DesiredSize.Height;
+        var monitor = MonitorFromPoint(cursor, MonitorDefaultToNearest);
+        if (monitor == nint.Zero)
+        {
+            return false;
+        }
 
-        var left = workArea.Right - flyoutWidth - 14;
-        var top = workArea.Bottom - flyoutHeight - 14;
+        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (!GetMonitorInfo(monitor, ref info))
+        {
+            return false;
+        }
 
-        flyout.Left = Math.Max(workArea.Left + 8, left);
-        flyout.Top = Math.Max(workArea.Top + 8, top);
+        workArea = info.rcWork;
+        return workArea.Right > workArea.Left && workArea.Bottom > workArea.Top;
     }
 
     private void HideTrayFlyout()
@@ -1532,8 +1574,17 @@ window.__DESK_HOST_INFO = {{{json}}};
     [DllImport("user32.dll")]
     private static extern nint MonitorFromWindow(nint hwnd, int dwFlags);
 
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromPoint(POINT pt, int dwFlags);
+
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(nint hWnd, out RECT lpRect);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
     private struct MONITORINFO
@@ -1551,6 +1602,13 @@ window.__DESK_HOST_INFO = {{{json}}};
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
     }
 
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
