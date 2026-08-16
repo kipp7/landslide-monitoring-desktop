@@ -48,3 +48,8 @@ apps/windows-shell/installer/Output/
 *.db
 *.sqlite
 *.sqlite3
+
+# Local browser and package verification evidence
+.playwright-cli/
+output/
+docs/reports/
