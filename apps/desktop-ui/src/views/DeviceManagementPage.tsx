@@ -22,6 +22,7 @@ import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { StatusTag } from "../components/StatusTag";
 import { formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
+import { deviceStateDisplayMetrics } from "../utils/deviceStateFreshness";
 import {
   fieldAlarmTerminalConnectionLabel,
   fieldAlarmTerminalFirmware,
@@ -324,7 +325,7 @@ export function DeviceManagementPage() {
   }, [api, refreshSelectedData, selectedDeviceId]);
 
   const latestMetrics = useMemo(() => {
-    const metrics = deviceState?.metrics;
+    const metrics = deviceStateDisplayMetrics(deviceState);
     return {
       soilTemperatureC: readMetricNumber(metrics, "soil_temperature_c"),
       soilMoisturePct: readMetricNumber(metrics, "soil_moisture_pct"),

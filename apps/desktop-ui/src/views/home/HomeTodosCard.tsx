@@ -1,5 +1,18 @@
 import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
-import { App as AntApp, Button, Checkbox, Form, Input, Modal, Select, Skeleton, Space, Tabs, Tag, Typography } from "antd";
+import {
+  App as AntApp,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Skeleton,
+  Space,
+  Tabs,
+  Tag,
+  Typography,
+} from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -37,7 +50,10 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
     saveTodos(persist);
   }, [persist]);
 
-  const systemTasks = useMemo(() => buildSystemTasks(props.stations, props.devices), [props.devices, props.stations]);
+  const systemTasks = useMemo(
+    () => buildSystemTasks(props.stations, props.devices),
+    [props.devices, props.stations]
+  );
 
   const allTasks = useMemo(() => {
     const map = new Map<string, HomeTask>();
@@ -86,15 +102,15 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
 
   const resetTodos = () => {
     modal.confirm({
-      title: "重置待处理事项",
-      content: "将清空已勾选状态与自定义待办（本地保存）。",
+      title: "重置本机待办",
+      content: "将清空当前电脑上的完成状态和手工待办。",
       okText: "重置",
       cancelText: "取消",
       okButtonProps: { danger: true },
       onOk: () => {
         setPersist({ version: 1, manualTasks: [], doneAtById: {} });
-        message.success("已重置");
-      }
+        message.success("本机待办已重置");
+      },
     });
   };
 
@@ -110,7 +126,9 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
     }
 
     if (task.stationId) {
-      navigate(`/app/device-management?tab=management&stationId=${encodeURIComponent(task.stationId)}`);
+      navigate(
+        `/app/device-management?tab=management&stationId=${encodeURIComponent(task.stationId)}`
+      );
       return;
     }
 
@@ -127,8 +145,12 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
     setSubmitting(true);
     try {
       const values = await form.validateFields();
-      const station = values.stationId ? props.stations.find((s) => s.id === values.stationId) ?? null : null;
-      const device = values.deviceId ? props.devices.find((d) => d.id === values.deviceId) ?? null : null;
+      const station = values.stationId
+        ? (props.stations.find((s) => s.id === values.stationId) ?? null)
+        : null;
+      const device = values.deviceId
+        ? (props.devices.find((d) => d.id === values.deviceId) ?? null)
+        : null;
       const title = values.title.trim();
       const description = values.description?.trim();
       const base: HomeTask = {
@@ -137,7 +159,7 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
         title,
         category: device ? "device" : station ? "site" : "other",
         priority: values.priority,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       };
 
       const next: HomeTask = {
@@ -148,13 +170,13 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
               deviceId: device.id,
               deviceName: device.name,
               stationId: device.stationId,
-              stationName: device.stationName
+              stationName: device.stationName,
             }
           : {}),
-        ...(description ? { description } : {})
+        ...(description ? { description } : {}),
       };
       setPersist((prev) => ({ ...prev, manualTasks: [next, ...prev.manualTasks] }));
-      message.success("已添加待办");
+      message.success("已保存到本机待办");
       setCreateOpen(false);
     } catch (err) {
       if (err instanceof Error) message.error(err.message);
@@ -181,12 +203,18 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
           <div className="desk-home-todo-main">
             <div className="desk-home-todo-title">{t.title}</div>
             <div className="desk-home-todo-tags">
-              <Tag className={`desk-pill-tag desk-tone-${t.source === "system" ? "cyan" : "geekblue"}`}>
-                {t.source === "system" ? "系统建议" : "我的待办"}
+              <Tag
+                className={`desk-pill-tag desk-tone-${t.source === "system" ? "cyan" : "geekblue"}`}
+              >
+                {t.source === "system" ? "状态派生" : "本机待办"}
               </Tag>
               <Tag className={`desk-pill-tag desk-tone-${p.color}`}>{p.text}</Tag>
-              {t.stationName ? <Tag className="desk-pill-tag desk-tone-blue">{t.stationName}</Tag> : null}
-              {t.deviceName ? <Tag className="desk-pill-tag desk-tone-purple">{t.deviceName}</Tag> : null}
+              {t.stationName ? (
+                <Tag className="desk-pill-tag desk-tone-blue">{t.stationName}</Tag>
+              ) : null}
+              {t.deviceName ? (
+                <Tag className="desk-pill-tag desk-tone-purple">{t.deviceName}</Tag>
+              ) : null}
             </div>
             <div className="desk-home-todo-meta">
               <span>{t.description ?? "—"}</span>
@@ -217,13 +245,26 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
   return (
     <>
       <BaseCard
-        title="待处理事项"
+        title="运行待办"
         extra={
           <Space size={8}>
-            <Button size="small" shape="round" type="primary" className="desk-home-action-primary" icon={<PlusOutlined />} onClick={openCreate}>
+            <Button
+              size="small"
+              shape="round"
+              type="primary"
+              className="desk-home-action-primary"
+              icon={<PlusOutlined />}
+              onClick={openCreate}
+            >
               新建
             </Button>
-            <Button size="small" shape="round" className="desk-home-action-secondary" icon={<ReloadOutlined />} onClick={resetTodos}>
+            <Button
+              size="small"
+              shape="round"
+              className="desk-home-action-secondary"
+              icon={<ReloadOutlined />}
+              onClick={resetTodos}
+            >
               重置
             </Button>
           </Space>
@@ -236,14 +277,22 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
             if (key === "todo" || key === "done") setTab(key);
           }}
           items={[
-            { key: "todo", label: `待处理 ${String(pendingTasks.length)}`, children: <div className="desk-home-todo-list">{renderList(pendingTasks)}</div> },
-            { key: "done", label: `已完成 ${String(doneTasks.length)}`, children: <div className="desk-home-todo-list">{renderList(doneTasks)}</div> }
+            {
+              key: "todo",
+              label: `待处理 ${String(pendingTasks.length)}`,
+              children: <div className="desk-home-todo-list">{renderList(pendingTasks)}</div>,
+            },
+            {
+              key: "done",
+              label: `已完成 ${String(doneTasks.length)}`,
+              children: <div className="desk-home-todo-list">{renderList(doneTasks)}</div>,
+            },
           ]}
         />
       </BaseCard>
 
       <Modal
-        title="新建待办"
+        title="新建本机待办"
         open={createOpen}
         okText="添加"
         cancelText="取消"
@@ -259,12 +308,16 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
           <Form.Item name="title" label="标题" rules={[{ required: true, message: "请输入标题" }]}>
             <Input placeholder="例如：现场巡检滑坡点 A 供电箱" />
           </Form.Item>
-          <Form.Item name="priority" label="优先级" rules={[{ required: true, message: "请选择优先级" }]}>
+          <Form.Item
+            name="priority"
+            label="优先级"
+            rules={[{ required: true, message: "请选择优先级" }]}
+          >
             <Select
               options={[
                 { value: "high", label: "高优先" },
                 { value: "mid", label: "中优先" },
-                { value: "low", label: "低优先" }
+                { value: "low", label: "低优先" },
               ]}
             />
           </Form.Item>
@@ -272,15 +325,20 @@ export function HomeTodosCard(props: { loading: boolean; stations: Station[]; de
             <Select
               allowClear
               placeholder="选择站点"
-              options={props.stations.map((s) => ({ value: s.id, label: `${s.name}（${s.area}）` }))}
+              options={props.stations.map((s) => ({
+                value: s.id,
+                label: `${s.name}（${s.area}）`,
+              }))}
             />
           </Form.Item>
           <Form.Item shouldUpdate noStyle>
             {() => {
               const stationId = form.getFieldValue("stationId") as string | undefined;
-              const options = (stationId ? props.devices.filter((d) => d.stationId === stationId) : props.devices).map((d) => ({
+              const options = (
+                stationId ? props.devices.filter((d) => d.stationId === stationId) : props.devices
+              ).map((d) => ({
                 value: d.id,
-                label: `${d.name}（${d.stationName}）`
+                label: `${d.name}（${d.stationName}）`,
               }));
               return (
                 <Form.Item name="deviceId" label="关联设备（可选）">

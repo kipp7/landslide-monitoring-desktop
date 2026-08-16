@@ -44,6 +44,7 @@ export function applyFieldAlarmActionResult(
 
 type FieldAlarmStore = {
   status: FieldAlarmStatus | null;
+  revision: number;
   setStatus: (status: FieldAlarmStatus | null) => void;
   applyActionResult: (result: FieldAlarmActionResult, alertId?: string) => void;
   reset: () => void;
@@ -51,10 +52,12 @@ type FieldAlarmStore = {
 
 export const useFieldAlarmStore = create<FieldAlarmStore>((set) => ({
   status: null,
+  revision: 0,
   setStatus: (status) => set({ status }),
   applyActionResult: (result, alertId) =>
     set((current) => ({
       status: current.status ? applyFieldAlarmActionResult(current.status, result, alertId) : null,
+      revision: current.revision + (result.accepted ? 1 : 0),
     })),
-  reset: () => set({ status: null }),
+  reset: () => set((current) => ({ status: null, revision: current.revision + 1 })),
 }));

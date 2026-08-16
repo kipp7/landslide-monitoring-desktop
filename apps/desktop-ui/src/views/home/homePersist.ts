@@ -63,7 +63,8 @@ export function loadTodos(): HomeTodoPersist {
     return {
       version: 1,
       manualTasks: Array.isArray(parsed.manualTasks) ? parsed.manualTasks : [],
-      doneAtById: parsed.doneAtById && typeof parsed.doneAtById === "object" ? parsed.doneAtById : {}
+      doneAtById:
+        parsed.doneAtById && typeof parsed.doneAtById === "object" ? parsed.doneAtById : {},
     };
   } catch {
     return { version: 1, manualTasks: [], doneAtById: {} };
@@ -80,7 +81,9 @@ export function saveTodos(next: HomeTodoPersist) {
 
 export function loadPins(): string[] {
   try {
-    const parsed = safeJsonParse<{ version: number; pinnedStationIds: string[] }>(localStorage.getItem(HOME_PINS_KEY));
+    const parsed = safeJsonParse<{ version: number; pinnedStationIds: string[] }>(
+      localStorage.getItem(HOME_PINS_KEY)
+    );
     if (!parsed || parsed.version !== 1) return [];
     if (!Array.isArray(parsed.pinnedStationIds)) return [];
     return parsed.pinnedStationIds.filter((v) => typeof v === "string");
@@ -103,7 +106,10 @@ export function loadAnnouncements(): HomeAnnouncementPersist {
     if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.items)) {
       return { version: 1, items: [] };
     }
-    return { version: 1, items: parsed.items.filter((item) => !LEGACY_SAMPLE_ANNOUNCEMENT_IDS.has(item.id)) };
+    return {
+      version: 1,
+      items: parsed.items.filter((item) => !LEGACY_SAMPLE_ANNOUNCEMENT_IDS.has(item.id)),
+    };
   } catch {
     return { version: 1, items: [] };
   }
@@ -119,7 +125,9 @@ export function saveAnnouncements(next: HomeAnnouncementPersist) {
 
 export function loadAnnouncementRead(userId: string): Record<string, string> {
   try {
-    const parsed = safeJsonParse<Record<string, string>>(localStorage.getItem(`${HOME_ANN_READ_PREFIX}${userId}`));
+    const parsed = safeJsonParse<Record<string, string>>(
+      localStorage.getItem(`${HOME_ANN_READ_PREFIX}${userId}`)
+    );
     if (!parsed || typeof parsed !== "object") return {};
     return parsed;
   } catch {
@@ -160,7 +168,6 @@ export function createId(prefix: string) {
 }
 
 export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTask[] {
-  const now = new Date().toISOString();
   const tasks: HomeTask[] = [];
 
   for (const d of devices) {
@@ -176,7 +183,7 @@ export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTa
         deviceName: d.name,
         category: "device",
         priority: "high",
-        createdAt: d.lastSeenAt
+        createdAt: d.lastSeenAt,
       });
     }
 
@@ -184,21 +191,24 @@ export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTa
       tasks.push({
         id: `sys:device-warning:${d.id}`,
         source: "system",
-        title: `复核预警设备：${d.name}`,
-        description: "建议核对阈值与基线配置，并复核土壤温湿度、电导率、倾角及数据连续性。",
+        title: `检查上报超时：${d.name}`,
+        description:
+          "设备仍处于启用状态，但数据已超过在线时效窗口。建议检查供电、无线链路和网关接收记录。",
         stationId: d.stationId,
         stationName: d.stationId ? d.stationName : "未绑定监测点",
         deviceId: d.id,
         deviceName: d.name,
         category: "device",
         priority: "mid",
-        createdAt: d.lastSeenAt
+        createdAt: d.lastSeenAt,
       });
     }
   }
 
   for (const st of stations) {
-    if (st.risk !== "high") continue;
+    const measuredRisk = st.metadata?.riskLevel ?? st.metadata?.risk_level;
+    if (measuredRisk !== "high") continue;
+    const riskUpdatedAt = st.metadata?.riskUpdatedAt ?? st.metadata?.risk_updated_at;
     tasks.push({
       id: `sys:station-focus:${st.id}`,
       source: "system",
@@ -207,8 +217,8 @@ export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTa
       stationId: st.id,
       stationName: st.name,
       category: "site",
-      priority: st.status === "warning" ? "high" : "mid",
-      createdAt: now
+      priority: "high",
+      createdAt: typeof riskUpdatedAt === "string" ? riskUpdatedAt : "",
     });
   }
 

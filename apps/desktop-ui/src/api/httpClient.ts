@@ -93,6 +93,8 @@ type V1ListResponse<T> = {
 
 type V1GpsDeformationResponse = {
   deviceId: string;
+  positionProfile?: "rtk-fixed" | "custom";
+  trustedOnly?: boolean;
   points: Array<{
     ts: string;
     distanceMeters: number;
@@ -1212,6 +1214,18 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           })
         );
       },
+      async armCompetitionQuickAlarm(input) {
+        return transport.requestV1<{
+          profile: CompetitionTiltProfile;
+          skipped: Array<{ deviceId: string; deviceName: string; reason: string }>;
+        }>(
+          "/api/v1/field-alarm/competition-profile/quick-arm",
+          transport.withJson({
+            method: "POST",
+            body: JSON.stringify(input ?? {}),
+          })
+        );
+      },
       async updateCompetitionProfile(input) {
         const response = await transport.requestV1<{ profile: CompetitionTiltProfile }>(
           "/api/v1/field-alarm/competition-profile",
@@ -1231,12 +1245,15 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
         const endTime = input.endTime ?? fallbackRange.endTime;
         const interval = input.interval ?? fallbackRange.interval;
         const limitQuery = input.limit == null ? "" : `&limit=${encodeURIComponent(String(input.limit))}`;
+        const trustedOnly = input.trustedOnly ?? true;
         const res = await transport.requestV1<V1GpsDeformationResponse>(
-          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/series?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&interval=${encodeURIComponent(interval)}${limitQuery}`
+          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/series?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&interval=${encodeURIComponent(interval)}&latKey=rtk_latitude_deg&lonKey=rtk_longitude_deg&altKey=rtk_altitude_msl_m&trustedOnly=${trustedOnly ? "true" : "false"}${limitQuery}`
         );
         return {
           deviceId: res.deviceId,
           deviceName: input.deviceId,
+          positionProfile: res.positionProfile ?? (trustedOnly ? "rtk-fixed" : "custom"),
+          trustedOnly: res.trustedOnly ?? trustedOnly,
           points: res.points.map((point) => ({
             ts: point.ts,
             dispMm: Number((point.distanceMeters * 1000).toFixed(2)),
@@ -1247,10 +1264,10 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
               ? { verticalMm: Number((point.verticalMeters * 1000).toFixed(2)) }
               : {}),
             ...(typeof point.latitude === "number"
-              ? { latitude: Number(point.latitude.toFixed(6)) }
+              ? { latitude: Number(point.latitude.toFixed(9)) }
               : {}),
             ...(typeof point.longitude === "number"
-              ? { longitude: Number(point.longitude.toFixed(6)) }
+              ? { longitude: Number(point.longitude.toFixed(9)) }
               : {}),
             ...(typeof point.counts?.lat === "number" && typeof point.counts.lon === "number"
               ? { sampleCount: Math.min(point.counts.lat, point.counts.lon) }
@@ -1261,6 +1278,7 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
       async getDerivedAnalysis(input): Promise<GpsDerivedAnalysis> {
         const rangeLabel = input.rangeLabel ?? "7d";
         const limit = input.limit ?? 200;
+        const trustedOnly = input.trustedOnly ?? true;
         const res = await transport.requestV1<{
           deviceId: string;
           hasBaseline: boolean;
@@ -1326,7 +1344,7 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
             };
           };
         }>(
-          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/analysis?timeRange=${encodeURIComponent(rangeLabel)}&limit=${encodeURIComponent(String(limit))}`
+          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/analysis?timeRange=${encodeURIComponent(rangeLabel)}&limit=${encodeURIComponent(String(limit))}&trustedOnly=${trustedOnly ? "true" : "false"}`
         );
 
         const ceemdAnalysis = res.ceemd;
@@ -1674,9 +1692,9 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
             body: JSON.stringify({
               pointsCount: 50,
               lookbackDays: 30,
-              latKey: "gps_latitude",
-              lonKey: "gps_longitude",
-              altKey: "gps_altitude",
+              latKey: "rtk_latitude_deg",
+              lonKey: "rtk_longitude_deg",
+              altKey: "rtk_altitude_msl_m",
               ...(input.persist === undefined ? {} : { persist: input.persist }),
             }),
           })

@@ -871,6 +871,11 @@
   background: transparent;
 }
 
+.desk-analysis-maptop.is-realmap .leaflet-control-attribution,
+.desk-gps-location-map .leaflet-control-attribution {
+  display: none;
+}
+
 .desk-analysis-maptop.is-realmap .leaflet-control-attribution {
   color: rgba(226, 232, 240, 0.8);
   background: rgba(2, 6, 23, 0.35);
@@ -1282,6 +1287,16 @@
   color: rgba(226, 232, 240, 0.9);
   font-size: 12px;
   font-weight: 700;
+}
+
+.desk-analysis-maptop.is-realmap .desk-analysis-map-legend {
+  margin-bottom: 40px;
+}
+
+@media (max-width: 720px) {
+  .desk-analysis-maptop.is-realmap .desk-analysis-map-legend {
+    margin-bottom: 58px;
+  }
 }
 
 .desk-analysis-map-legend .dot {

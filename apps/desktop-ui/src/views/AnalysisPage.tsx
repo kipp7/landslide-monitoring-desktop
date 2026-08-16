@@ -26,6 +26,8 @@ import { useAuthStore } from "../stores/authStore";
 import { useFieldAlarmStore } from "../stores/fieldAlarmStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { formatBeijingDate, formatBeijingDateTime, formatBeijingTime } from "../utils/beijingTime";
+import { deviceStateDisplayMetrics, deviceStateScopeUpdatedAt } from "../utils/deviceStateFreshness";
+import { defaultFieldNodeLocation } from "../utils/defaultMonitoringLocation";
 import { fieldAlarmTerminalConnectionLabel } from "../utils/fieldAlarmTerminal";
 import { formatInstallLabelDisplay, formatWarningFlagDisplay } from "../utils/fieldIdentityDisplay";
 
@@ -68,6 +70,25 @@ const DEFAULT_COMPETITION_THRESHOLDS: CompetitionThresholdForm = {
   recoveryPoints: 2,
   updateStepDeg: 0.25,
 };
+
+function validateCompetitionThresholds(thresholds: CompetitionThresholdForm): string {
+  const values = Object.values(thresholds);
+  if (values.some((value) => !Number.isFinite(value))) return "请填写完整的告警阈值";
+  if (thresholds.highDeg <= 0 || thresholds.highDeg > 45) return "高风险阈值必须在 0° 到 45° 之间";
+  if (thresholds.criticalDeg <= thresholds.highDeg) return "严重风险阈值必须大于高风险阈值";
+  if (thresholds.criticalDeg > 90) return "严重风险阈值不能超过 90°";
+  if (thresholds.recoveryDeg < 0 || thresholds.recoveryDeg >= thresholds.highDeg) {
+    return "重新布防范围必须小于高风险阈值";
+  }
+  if (!Number.isInteger(thresholds.triggerPoints) || thresholds.triggerPoints < 1 || thresholds.triggerPoints > 10) {
+    return "连续确认点数必须是 1 到 10 之间的整数";
+  }
+  if (!Number.isInteger(thresholds.recoveryPoints) || thresholds.recoveryPoints < 1 || thresholds.recoveryPoints > 10) {
+    return "重新布防点数必须是 1 到 10 之间的整数";
+  }
+  if (thresholds.updateStepDeg <= 0 || thresholds.updateStepDeg > 10) return "告警更新步长必须在 0° 到 10° 之间";
+  return "";
+}
 
 const REVIEW_CONCLUSION_OPTIONS: Array<{ value: ReviewConclusion; label: string }> = [
   { value: "confirmed_risk", label: "确认风险事件" },
@@ -156,11 +177,6 @@ function isFormalIdentityClass(value?: string | null): boolean {
   return normalizeIdentityClass(value) === "formal";
 }
 
-const XIAMEN_UNIVERSITY_DEFAULT_LOCATION = {
-  lat: 24.43803,
-  lng: 118.09631
-} as const;
-
 function isValidGpsCoordinatePair(latitude: number | null, longitude: number | null): boolean {
   return (
     latitude != null &&
@@ -181,16 +197,6 @@ function isFormalFieldNode(device: Device): boolean {
   return identityText.includes("field") || identityText.includes("node") || identityText.includes("分节点");
 }
 
-function spreadDefaultMapLocation(index: number, total: number): { lat: number; lng: number } {
-  if (total <= 1) return XIAMEN_UNIVERSITY_DEFAULT_LOCATION;
-  const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
-  const radius = 0.0012;
-  return {
-    lat: XIAMEN_UNIVERSITY_DEFAULT_LOCATION.lat + Math.sin(angle) * radius,
-    lng: XIAMEN_UNIVERSITY_DEFAULT_LOCATION.lng + Math.cos(angle) * radius
-  };
-}
-
 function deviceTypeLabel(type: Device["type"]): string {
   if (type === "gnss") return "GNSS";
   if (type === "rain") return "雨量";
@@ -200,7 +206,7 @@ function deviceTypeLabel(type: Device["type"]): string {
 }
 
 function isSoilSensorDevice(device: Device, snapshot?: DeviceStateSnapshot | null): boolean {
-  const metrics = snapshot?.metrics ?? {};
+  const metrics = deviceStateDisplayMetrics(snapshot);
   if (
     readMetricNumber(metrics, "soil_temperature_c") != null ||
     readMetricNumber(metrics, "temperature_c") != null ||
@@ -225,7 +231,7 @@ function isSoilSensorDevice(device: Device, snapshot?: DeviceStateSnapshot | nul
 }
 
 function isTiltSensorDevice(device: Device, snapshot?: DeviceStateSnapshot | null): boolean {
-  const metrics = snapshot?.metrics ?? {};
+  const metrics = deviceStateDisplayMetrics(snapshot);
   if (readMetricNumber(metrics, "tilt_x_deg") != null || readMetricNumber(metrics, "tilt_y_deg") != null) return true;
   const text = [
     device.type,
@@ -849,9 +855,14 @@ export function AnalysisPage() {
   const [fieldAlarmEvents, setFieldAlarmEvents] = useState<AlertLifecycleEvent[]>([]);
   const [competitionSetupOpen, setCompetitionSetupOpen] = useState(false);
   const [competitionCaptureBusy, setCompetitionCaptureBusy] = useState(false);
+  const [competitionQuickAlarmBusy, setCompetitionQuickAlarmBusy] = useState(false);
   const [competitionCaptureError, setCompetitionCaptureError] = useState("");
   const [competitionThresholds, setCompetitionThresholds] = useState<CompetitionThresholdForm>(
     DEFAULT_COMPETITION_THRESHOLDS
+  );
+  const competitionThresholdValidationError = useMemo(
+    () => validateCompetitionThresholds(competitionThresholds),
+    [competitionThresholds]
   );
   const abortRef = useRef<AbortController | null>(null);
 
@@ -886,10 +897,9 @@ export function AnalysisPage() {
       else setRefreshing(true);
 
       try {
-        const [s, d, fieldAlarmResult] = await Promise.all([
+        const [s, d] = await Promise.all([
           api.stations.list(),
-          api.devices.list(),
-          api.fieldAlarm.getStatus().catch(() => null)
+          api.devices.list()
         ]);
         if (abort.signal.aborted) return;
         const formalDevices = d.filter((device) => isFormalIdentityClass(device.identityClass));
@@ -908,7 +918,6 @@ export function AnalysisPage() {
         setStations(formalStations);
         setDevices(formalDevices);
         setDeviceStates(nextStates);
-        setFieldAlarmStatus(fieldAlarmResult);
         setLastUpdate(formatBeijingDateTime(new Date()));
         if (refreshTrends) setTrendRefreshSeq((value) => value + 1);
       } finally {
@@ -922,8 +931,12 @@ export function AnalysisPage() {
   );
 
   const refreshFieldAlarmStatus = useCallback(async () => {
+    const statusRevision = useFieldAlarmStore.getState().revision;
     try {
-      setFieldAlarmStatus(await api.fieldAlarm.getStatus());
+      const status = await api.fieldAlarm.getStatus();
+      if (statusRevision === useFieldAlarmStore.getState().revision) {
+        setFieldAlarmStatus(status);
+      }
     } catch {
       // Keep the accepted local transition; the regular refresh loop will retry.
     }
@@ -1513,12 +1526,14 @@ export function AnalysisPage() {
     return visibleDevices
       .map((device) => {
         const snapshot = deviceStates[device.id] ?? null;
-        const metrics = snapshot?.metrics ?? {};
+        const metrics = deviceStateDisplayMetrics(snapshot);
         const soilTemperatureC = readMetricNumber(metrics, "soil_temperature_c");
         const soilMoisturePct = readMetricNumber(metrics, "soil_moisture_pct");
         return {
           device,
           updatedAt: snapshot?.updatedAt ?? device.lastSeenAt,
+          coreUpdatedAt: snapshot ? deviceStateScopeUpdatedAt(snapshot, "core") : null,
+          environmentUpdatedAt: snapshot ? deviceStateScopeUpdatedAt(snapshot, "environment") : null,
           temperatureC: readMetricNumber(metrics, "temperature_c"),
           humidityPct: readMetricNumber(metrics, "humidity_pct"),
           soilTemperatureC: soilTemperatureC ?? readMetricNumber(metrics, "temperature_c"),
@@ -2048,11 +2063,13 @@ export function AnalysisPage() {
   const dataFreshnessOption = useMemo(() => {
     const rows = liveSnapshotRows
       .map((row) => {
-        const updatedAt = dayjs(row.updatedAt);
-        const ageSeconds = updatedAt.isValid() ? Math.max(0, dayjs(now).diff(updatedAt, "second")) : 300;
+        const updatedAt = row.coreUpdatedAt ? dayjs(row.coreUpdatedAt) : null;
+        const hasCoreTimestamp = Boolean(updatedAt?.isValid());
+        const ageSeconds = hasCoreTimestamp ? Math.max(0, dayjs(now).diff(updatedAt, "second")) : 300;
         return {
           label: fieldNodeLegendLabel(row.device),
           ageSeconds,
+          hasCoreTimestamp,
           status: row.device.status
         };
       })
@@ -2075,10 +2092,11 @@ export function AnalysisPage() {
       yAxis: { type: "category", data: rows.map((row) => row.label), ...darkAxis() },
       series: [
         {
-          name: "距最后上报",
+          name: "距核心数据上报",
           type: "bar",
           data: rows.map((row) => ({
             value: row.ageSeconds,
+            hasCoreTimestamp: row.hasCoreTimestamp,
             itemStyle: {
               color:
                 row.status === "offline" || row.ageSeconds > 30
@@ -2094,7 +2112,10 @@ export function AnalysisPage() {
             show: true,
             position: "right",
             color: "rgba(226, 232, 240, 0.9)",
-            formatter: "{c}s"
+            formatter: (params: { data?: { value?: number; hasCoreTimestamp?: boolean }; value?: number }) => {
+              const data = params.data;
+              return data?.hasCoreTimestamp === false ? "无核心数据" : `${String(data?.value ?? params.value ?? "--")}s`;
+            }
           },
           markLine: {
             silent: true,
@@ -2198,7 +2219,17 @@ export function AnalysisPage() {
   }, [rainfallTrend]);
 
   const freshSnapshotRows = useMemo(
-    () => liveSnapshotRows.filter((row) => dayjs().diff(dayjs(row.updatedAt), "minute") <= 15),
+    () => liveSnapshotRows.filter((row) => {
+      const updatedAt = row.coreUpdatedAt ? dayjs(row.coreUpdatedAt) : null;
+      return Boolean(updatedAt?.isValid()) && dayjs().diff(updatedAt, "minute") <= 15;
+    }),
+    [liveSnapshotRows]
+  );
+  const freshEnvironmentSnapshotRows = useMemo(
+    () => liveSnapshotRows.filter((row) => {
+      const updatedAt = row.environmentUpdatedAt ? dayjs(row.environmentUpdatedAt) : null;
+      return Boolean(updatedAt?.isValid()) && dayjs().diff(updatedAt, "minute") <= 15;
+    }),
     [liveSnapshotRows]
   );
   const freshDeviceCount = freshSnapshotRows.length;
@@ -2249,15 +2280,21 @@ export function AnalysisPage() {
         key: "conductivity",
         label: "土壤电导率",
         matches: (device) =>
-          readMetricNumber(deviceStates[device.id]?.metrics, "electrical_conductivity_us_cm") != null
+          readMetricNumber(deviceStateDisplayMetrics(deviceStates[device.id]), "electrical_conductivity_us_cm") != null
       },
       {
         key: "gnss",
         label: "GNSS",
         matches: (device) => {
-          const metrics = deviceStates[device.id]?.metrics;
-          const latitude = readMetricNumber(metrics, "gps_latitude") ?? readMetricNumber(metrics, "latitude");
-          const longitude = readMetricNumber(metrics, "gps_longitude") ?? readMetricNumber(metrics, "longitude");
+          const metrics = deviceStateDisplayMetrics(deviceStates[device.id]);
+          const latitude =
+            readMetricNumber(metrics, "rtk_latitude_deg") ??
+            readMetricNumber(metrics, "gps_latitude") ??
+            readMetricNumber(metrics, "latitude");
+          const longitude =
+            readMetricNumber(metrics, "rtk_longitude_deg") ??
+            readMetricNumber(metrics, "gps_longitude") ??
+            readMetricNumber(metrics, "longitude");
           return isValidGpsCoordinatePair(latitude, longitude);
         }
       }
@@ -2320,14 +2357,14 @@ export function AnalysisPage() {
   }, [anomalyDetails, deviceStates, fieldAlarmStatus?.alerts, visibleDevices]);
 
   const freshSoilReadings = useMemo(() => {
-    return freshSnapshotRows
+    return freshEnvironmentSnapshotRows
       .filter((row) => row.soilTemperatureC != null || row.soilMoisturePct != null)
       .map((row) => {
         const temperature = row.soilTemperatureC == null ? "温度未上报" : `${row.soilTemperatureC.toFixed(1)}°C`;
         const moisture = row.soilMoisturePct == null ? "水分未上报" : `${row.soilMoisturePct.toFixed(1)}%`;
         return `${fieldNodeLegendLabel(row.device)} ${temperature} / ${moisture}`;
       });
-  }, [freshSnapshotRows]);
+  }, [freshEnvironmentSnapshotRows]);
 
   const rainDeviceCount = useMemo(
     () => visibleDevices.filter((device) => device.type === "rain").length,
@@ -2478,6 +2515,10 @@ export function AnalysisPage() {
 
   const captureCompetitionBaseline = async () => {
     if (competitionCaptureBusy) return;
+    if (competitionThresholdValidationError) {
+      setCompetitionCaptureError(competitionThresholdValidationError);
+      return;
+    }
     setCompetitionCaptureBusy(true);
     setCompetitionCaptureError("");
     try {
@@ -2497,6 +2538,31 @@ export function AnalysisPage() {
     } finally {
       setCompetitionCaptureBusy(false);
     }
+  };
+
+  const armCompetitionQuickAlarm = async () => {
+    if (competitionQuickAlarmBusy) return;
+    setCompetitionQuickAlarmBusy(true);
+    try {
+      const result = await api.fieldAlarm.armCompetitionQuickAlarm();
+      if (fieldAlarmStatus) {
+        setFieldAlarmStatus({ ...fieldAlarmStatus, competitionProfile: result.profile });
+      }
+      const covered = result.profile.quickAlarm?.deviceIds.length ?? result.profile.devices.length;
+      message.success(`快警已布防，覆盖全部 ${String(covered)} 个节点，有效 180 秒`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "快速预警布防失败");
+    } finally {
+      setCompetitionQuickAlarmBusy(false);
+    }
+  };
+
+  const updateCompetitionThreshold = <K extends keyof CompetitionThresholdForm>(
+    key: K,
+    value: CompetitionThresholdForm[K]
+  ) => {
+    setCompetitionCaptureError("");
+    setCompetitionThresholds((current) => ({ ...current, [key]: value }));
   };
 
   const acknowledgeFieldAlarm = useCallback(async () => {
@@ -2537,7 +2603,7 @@ export function AnalysisPage() {
       const thresholds = fieldAlarmStatus?.competitionProfile?.thresholds ?? DEFAULT_COMPETITION_THRESHOLDS;
       message.success(
         `复核已完成并归档，现场警报已解除。回到倾角基线 ${String(thresholds.recoveryDeg)}° 内连续 ${String(thresholds.recoveryPoints)} 个点后自动重新布防；也可以重新采集基线。`,
-        6
+        3
       );
     } catch (err) {
       setFieldAlarmReviewError(err instanceof Error ? err.message : "解除警报失败，请检查 API 或 Tongxiao RK2206 连接。");
@@ -2559,13 +2625,20 @@ export function AnalysisPage() {
       .slice()
       .sort((a, b) => fieldNodeLegendLabel(a).localeCompare(fieldNodeLegendLabel(b)));
 
-    return fieldNodes.map((device, index) => {
+    return fieldNodes.map((device) => {
       const station = stationById.get(device.stationId);
       const snapshot = deviceStates[device.id];
-      const latitude = readMetricNumber(snapshot?.metrics, "gps_latitude");
-      const longitude = readMetricNumber(snapshot?.metrics, "gps_longitude");
-      const hasValidGps = isValidGpsCoordinatePair(latitude, longitude);
-      const fallback = spreadDefaultMapLocation(index, fieldNodes.length);
+      const metrics = deviceStateDisplayMetrics(snapshot);
+      const rtkLatitude = readMetricNumber(metrics, "rtk_latitude_deg");
+      const rtkLongitude = readMetricNumber(metrics, "rtk_longitude_deg");
+      const legacyLatitude = readMetricNumber(metrics, "gps_latitude");
+      const legacyLongitude = readMetricNumber(metrics, "gps_longitude");
+      const hasRtk = isValidGpsCoordinatePair(rtkLatitude, rtkLongitude);
+      const hasLegacyGps = isValidGpsCoordinatePair(legacyLatitude, legacyLongitude);
+      const fallback = defaultFieldNodeLocation(device.nodeCode ?? device.installLabel ?? device.id);
+      const latitude = hasRtk ? rtkLatitude : hasLegacyGps ? legacyLatitude : null;
+      const longitude = hasRtk ? rtkLongitude : hasLegacyGps ? legacyLongitude : null;
+      const stateUpdatedAt = snapshot ? deviceStateScopeUpdatedAt(snapshot, "core") ?? snapshot.updatedAt : device.lastSeenAt;
       return {
         id: device.id,
         stationId: device.stationId,
@@ -2573,10 +2646,10 @@ export function AnalysisPage() {
         stationName: station?.name ?? device.stationName,
         risk: station?.risk ?? "low",
         status: device.status,
-        lat: hasValidGps ? latitude! : fallback.lat,
-        lng: hasValidGps ? longitude! : fallback.lng,
-        locationSource: hasValidGps ? "gps" : "default",
-        lastSeenAt: snapshot?.updatedAt ?? device.lastSeenAt
+        lat: latitude != null && longitude != null ? latitude : fallback.lat,
+        lng: latitude != null && longitude != null ? longitude : fallback.lng,
+        locationSource: latitude != null && longitude != null ? "gps" : "default",
+        lastSeenAt: stateUpdatedAt
       };
     });
   }, [deviceStates, visibleDevices, visibleStations]);
@@ -2725,6 +2798,25 @@ export function AnalysisPage() {
               onClick={openCompetitionSetup}
             >
               {fieldAlarmStatus?.competitionProfile ? "重采倾角基线" : "采集倾角基线"}
+            </Button>
+            <Button
+              size="small"
+              className="desk-analysis-baseline-button"
+              type={
+                fieldAlarmStatus?.competitionProfile?.quickAlarm &&
+                Date.parse(fieldAlarmStatus.competitionProfile.quickAlarm.expiresAt) > Date.now()
+                  ? "primary"
+                  : "default"
+              }
+              loading={competitionQuickAlarmBusy}
+              disabled={Boolean(
+                !fieldAlarmStatus?.competitionProfile?.enabled ||
+                fieldAlarmStatus?.active ||
+                fieldAlarmStatus?.silenced
+              )}
+              onClick={() => { void armCompetitionQuickAlarm(); }}
+            >
+              快警
             </Button>
             <Button
               size="small"
@@ -2997,36 +3089,44 @@ export function AnalysisPage() {
               <span>高风险阈值</span>
               <InputNumber
                 min={0.5}
-                max={45}
+                max={Math.min(45, competitionThresholds.criticalDeg - 0.1)}
                 step={0.5}
                 precision={1}
+                status={
+                  competitionThresholds.highDeg <= competitionThresholds.recoveryDeg ||
+                  competitionThresholds.highDeg >= competitionThresholds.criticalDeg
+                    ? "error"
+                    : ""
+                }
                 value={competitionThresholds.highDeg}
                 addonAfter="°"
-                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, highDeg: Number(value ?? 3) }))}
+                onChange={(value) => updateCompetitionThreshold("highDeg", Number(value ?? 3))}
               />
             </label>
             <label>
               <span>严重风险阈值</span>
               <InputNumber
-                min={1}
+                min={Math.max(1, competitionThresholds.highDeg + 0.1)}
                 max={90}
                 step={0.5}
                 precision={1}
+                status={competitionThresholds.criticalDeg <= competitionThresholds.highDeg ? "error" : ""}
                 value={competitionThresholds.criticalDeg}
                 addonAfter="°"
-                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, criticalDeg: Number(value ?? 7) }))}
+                onChange={(value) => updateCompetitionThreshold("criticalDeg", Number(value ?? 7))}
               />
             </label>
             <label>
               <span>重新布防范围</span>
               <InputNumber
                 min={0}
-                max={20}
+                max={Math.max(0, competitionThresholds.highDeg - 0.1)}
                 step={0.5}
                 precision={1}
+                status={competitionThresholds.recoveryDeg >= competitionThresholds.highDeg ? "error" : ""}
                 value={competitionThresholds.recoveryDeg}
                 addonAfter="°"
-                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, recoveryDeg: Number(value ?? 1.5) }))}
+                onChange={(value) => updateCompetitionThreshold("recoveryDeg", Number(value ?? 1.5))}
               />
             </label>
             <label>
@@ -3038,7 +3138,7 @@ export function AnalysisPage() {
                 precision={0}
                 value={competitionThresholds.triggerPoints}
                 addonAfter="点"
-                onChange={(value) => setCompetitionThresholds((current) => ({ ...current, triggerPoints: Number(value ?? 2) }))}
+                onChange={(value) => updateCompetitionThreshold("triggerPoints", Number(value ?? 2))}
               />
             </label>
           </div>
@@ -3054,7 +3154,11 @@ export function AnalysisPage() {
               ))}
             </div>
           ) : null}
-          {competitionCaptureError ? <div className="desk-analysis-competition-error">{competitionCaptureError}</div> : null}
+          {competitionThresholdValidationError || competitionCaptureError ? (
+            <div className="desk-analysis-competition-error">
+              {competitionThresholdValidationError || competitionCaptureError}
+            </div>
+          ) : null}
         </div>
       </Modal>
 
@@ -3116,7 +3220,7 @@ export function AnalysisPage() {
                       setSelectedStationIds([]);
                       setMapViewSeed((s) => s + 1);
                     }}
-                  >
+                    >
                     重置视图
                   </Button>
                   {selectedStations.length ? <Tag color="cyan">已选 {selectedStations.length}</Tag> : null}
@@ -3160,6 +3264,7 @@ export function AnalysisPage() {
                         selectedStationIds={selectedStationIds}
                         onSelectStationIds={setSelectedStationIds}
                         resetKey={mapViewSeed}
+                        scopeKey={activeArea?.key ?? "scope:none"}
                         metricsByStationId={metricsByStationId}
                       />
                       <div className="desk-analysis-map-overlay">
@@ -3417,7 +3522,7 @@ export function AnalysisPage() {
 
           <div className="desk-analysis-rightcol">
             <div className="desk-analysis-right-top">
-              <BaseCard title="各分节点数据新鲜度（距最后上报，秒）">
+              <BaseCard title="各分节点核心数据新鲜度（GPS / 倾角，秒）">
                 <ReactECharts option={dataFreshnessOption} style={{ height: "100%" }} />
               </BaseCard>
             </div>

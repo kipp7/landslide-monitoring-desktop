@@ -241,6 +241,24 @@ export type CompetitionTiltProfile = {
     recoveryPoints: number;
     updateStepDeg: number;
   };
+  quickAlarm?: {
+    armedAt: string;
+    expiresAt: string;
+    durationSeconds: number;
+    deviceIds: string[];
+    thresholds: {
+      pointDeltaDeg: number;
+      anchorMaxDeviationDeg: number;
+      maxGapSeconds: number;
+      maxSingleDeltaDeg: number;
+    };
+    anchors: Array<{
+      deviceId: string;
+      tilt: CompetitionTiltVector;
+      observedAt: string;
+      seq: number | null;
+    }>;
+  };
   devices: Array<{
     deviceId: string;
     deviceName: string;
@@ -437,6 +455,8 @@ export type GpsSeries = {
   deviceId: string;
   deviceName: string;
   points: GpsPoint[];
+  positionProfile?: "rtk-fixed" | "custom" | "legacy";
+  trustedOnly?: boolean;
 };
 
 export type GpsDerivedAnalysis = {
@@ -865,6 +885,10 @@ export type ApiClient = {
       deviceIds?: string[];
       thresholds?: Partial<CompetitionTiltProfile["thresholds"]>;
     }) => Promise<{ profile: CompetitionTiltProfile; skipped: Array<{ deviceId: string; deviceName: string; reason: string }> }>;
+    armCompetitionQuickAlarm: (input?: {
+      deviceIds?: string[];
+      durationSeconds?: number;
+    }) => Promise<{ profile: CompetitionTiltProfile; skipped: Array<{ deviceId: string; deviceName: string; reason: string }> }>;
     updateCompetitionProfile: (input: {
       enabled?: boolean;
       thresholds?: Partial<CompetitionTiltProfile["thresholds"]>;
@@ -878,11 +902,13 @@ export type ApiClient = {
       endTime?: string;
       interval?: "1m" | "5m" | "1h" | "1d";
       limit?: number;
+      trustedOnly?: boolean;
     }) => Promise<GpsSeries>;
     getDerivedAnalysis: (input: {
       deviceId: string;
       rangeLabel?: string;
       limit?: number;
+      trustedOnly?: boolean;
     }) => Promise<GpsDerivedAnalysis>;
   };
   baselines: {

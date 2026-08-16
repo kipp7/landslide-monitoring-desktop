@@ -917,8 +917,8 @@ function makeBaselines(devices: Device[], stations: Station[]): Baseline[] {
     return {
       deviceId: d.id,
       deviceName: d.name,
-      baselineLat: Number(baseLat.toFixed(6)),
-      baselineLng: Number(baseLng.toFixed(6)),
+      baselineLat: Number(baseLat.toFixed(9)),
+      baselineLng: Number(baseLng.toFixed(9)),
       baselineAlt: 510 + idx * 2,
       establishedBy: "system",
       establishedTime: addDays(nowIso(), -idx),
@@ -1090,14 +1090,16 @@ function makeGpsSeries(
       dispMm: v,
       horizontalMm,
       verticalMm,
-      latitude: Number((baseLat + horizontalMm / 111_111_000).toFixed(6)),
-      longitude: Number((baseLng + verticalMm / 111_111_000).toFixed(6)),
+      latitude: Number((baseLat + horizontalMm / 111_111_000).toFixed(9)),
+      longitude: Number((baseLng + verticalMm / 111_111_000).toFixed(9)),
     };
   });
 
   return {
     deviceId,
     deviceName: device?.name ?? deviceId,
+    positionProfile: "rtk-fixed",
+    trustedOnly: true,
     points,
   };
 }
@@ -1880,6 +1882,7 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
         const tiltYDeg =
           input.deviceId === "device_tilt_03" ? 0.92 : stablePercent(`${input.deviceId}-tilt-y`, 12, 84) / 100;
         const warningFlag = device?.status === "warning";
+        const rtkFixed = input.deviceId === "device_gnss_01";
         return {
           deviceId: input.deviceId,
           updatedAt: device?.lastSeenAt ?? nowIso(),
@@ -1906,6 +1909,30 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
             tilt_y_deg: Number(tiltYDeg.toFixed(3)),
             gps_latitude: Number(((station?.lat ?? DEMO_SITE_LAT) + 0.000123).toFixed(6)),
             gps_longitude: Number(((station?.lng ?? DEMO_SITE_LNG) + 0.000156).toFixed(6)),
+            ...(device?.type === "gnss"
+              ? {
+                  rtk_latitude_deg: Number(((station?.lat ?? DEMO_SITE_LAT) + 0.00000123).toFixed(9)),
+                  rtk_longitude_deg: Number(((station?.lng ?? DEMO_SITE_LNG) + 0.00000156).toFixed(9)),
+                  rtk_altitude_msl_m: 52.012,
+                  rtk_gga_quality: rtkFixed ? 4 : 1,
+                  rtk_trusted: rtkFixed,
+                  rtk_satellites_used: 32,
+                  rtk_hdop: 0.55,
+                  rtk_solution_age_ms: 700,
+                  rtcm_error_summary_flags: 0,
+                  ...(rtkFixed
+                    ? {
+                        rtk_correction_age_ms: 1800,
+                        rtk_fixed_streak_s: 428,
+                        rtk_fixed_ratio_1m_pct: 98.3,
+                        rtk_gst_sigma_lat_mm: 4.2,
+                        rtk_gst_sigma_lon_mm: 5.1,
+                        rtk_gst_sigma_alt_mm: 11.8,
+                        rtk_reference_station_id: 1,
+                      }
+                    : {}),
+                }
+              : {}),
             battery_pct: batteryPct,
             soil_temperature_c: Number(temperatureC.toFixed(1)),
             soil_moisture_pct: Number(soilMoisturePct.toFixed(1)),
@@ -1916,6 +1943,22 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
             install_label: device?.name ?? input.deviceId,
             legacy_node: station?.name ?? "",
             upload_trigger: "periodic",
+            ...(device?.type === "gnss"
+              ? {
+                  gnss_source: "hardware",
+                  rtk_fix_type: rtkFixed ? "rtk_fixed" : "single",
+                  rtk_coordinate_frame: "WGS84",
+                  rtk_displacement_eligible: rtkFixed,
+                  compact_payload_version: 6,
+                  compact_scope: "core",
+                  rtcm_injection_mode: "live",
+                  _scope_samples: {
+                    core: {
+                      received_ts: nowIso(),
+                    },
+                  },
+                }
+              : {}),
           },
         };
       },
@@ -2173,6 +2216,37 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
         };
         return { profile: competitionTiltProfile, skipped: [] };
       },
+      async armCompetitionQuickAlarm(input) {
+        await afterDelay("fieldAlarm.armCompetitionQuickAlarm");
+        if (!competitionTiltProfile) throw new Error("请先采集并启用倾角基线");
+        const armedAt = nowIso();
+        const durationSeconds = input?.durationSeconds ?? 180;
+        const deviceIds = input?.deviceIds ?? competitionTiltProfile.devices.map((device) => device.deviceId);
+        competitionTiltProfile = {
+          ...competitionTiltProfile,
+          quickAlarm: {
+            armedAt,
+            expiresAt: new Date(Date.parse(armedAt) + durationSeconds * 1000).toISOString(),
+            durationSeconds,
+            deviceIds,
+            thresholds: {
+              pointDeltaDeg: 2,
+              anchorMaxDeviationDeg: 1,
+              maxGapSeconds: 6,
+              maxSingleDeltaDeg: 30,
+            },
+            anchors: competitionTiltProfile.devices
+              .filter((device) => deviceIds.includes(device.deviceId))
+              .map((device) => ({
+                deviceId: device.deviceId,
+                tilt: device.baseline,
+                observedAt: armedAt,
+                seq: null,
+              })),
+          },
+        };
+        return { profile: competitionTiltProfile, skipped: [] };
+      },
       async updateCompetitionProfile(input) {
         await afterDelay("fieldAlarm.updateCompetitionProfile");
         if (!competitionTiltProfile) throw new Error("请先采集当前倾角基线");
@@ -2209,8 +2283,8 @@ export function createMockClient(options: MockOptions = {}): ApiClient {
         await afterDelay("baselines.autoEstablish");
         const device = devices.find((d) => d.id === input.deviceId);
         const st = stations.find((s) => s.id === device?.stationId);
-        const lat = Number(((st?.lat ?? DEMO_SITE_LAT) + (Math.random() - 0.5) * 0.0006).toFixed(6));
-        const lng = Number(((st?.lng ?? DEMO_SITE_LNG) + (Math.random() - 0.5) * 0.0006).toFixed(6));
+        const lat = Number(((st?.lat ?? DEMO_SITE_LAT) + (Math.random() - 0.5) * 0.0000006).toFixed(9));
+        const lng = Number(((st?.lng ?? DEMO_SITE_LNG) + (Math.random() - 0.5) * 0.0000006).toFixed(9));
         return upsertBaseline({
           deviceId: input.deviceId,
           baselineLat: lat,

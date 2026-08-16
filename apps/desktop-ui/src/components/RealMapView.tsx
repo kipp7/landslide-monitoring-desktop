@@ -1,16 +1,16 @@
 import "leaflet/dist/leaflet.css";
 
 import L from "leaflet";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { MapContainer, Marker, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 
 import type { Station } from "../api/client";
+import { DEFAULT_MONITORING_LOCATION } from "../utils/defaultMonitoringLocation";
+import { MapCoordinateReadout } from "./MapCoordinateReadout";
 
 type BaseLayer = "2D" | "卫星图";
-type TileProvider = "tianditu" | "esri";
 
 const LEGACY_PUBLIC_TDT_KEY = "cc688e28c157fc3473807854c945f375";
-const TDT_TILE_ERROR_THRESHOLD = 4;
 
 export type StationMapMetrics = {
   deviceOnline: number;
@@ -41,6 +41,7 @@ type RealMapViewProps = {
   selectedStationIds: string[];
   onSelectStationIds: (ids: string[]) => void;
   resetKey?: number;
+  scopeKey?: string;
   metricsByStationId?: Record<string, StationMapMetrics | undefined>;
 };
 
@@ -62,16 +63,65 @@ function riskClass(risk: Station["risk"]) {
   return "is-low";
 }
 
-function RecenterOnReset(props: { resetKey: number | undefined; bounds: L.LatLngBoundsExpression }) {
+function MaintainInitialGpsViewport(props: {
+  resetKey: number | undefined;
+  scopeKey?: string;
+  bounds: L.LatLngBoundsExpression;
+  hasGpsLocations: boolean;
+}) {
   const map = useMap();
+  const appliedResetKeyRef = useRef(props.resetKey);
+  const appliedScopeKeyRef = useRef(props.scopeKey);
+  const waitForInitialGpsRef = useRef(!props.hasGpsLocations);
+  const userAdjustedViewRef = useRef(false);
+
   useEffect(() => {
-    if (props.resetKey == null) return;
-    map.fitBounds(props.bounds, { padding: [24, 24] });
-  }, [map, props.bounds, props.resetKey]);
+    const container = map.getContainer();
+    const markUserAdjusted = () => {
+      userAdjustedViewRef.current = true;
+    };
+
+    container.addEventListener("pointerdown", markUserAdjusted, { passive: true });
+    container.addEventListener("wheel", markUserAdjusted, { passive: true });
+    container.addEventListener("touchstart", markUserAdjusted, { passive: true });
+    container.addEventListener("dblclick", markUserAdjusted, { passive: true });
+
+    return () => {
+      container.removeEventListener("pointerdown", markUserAdjusted);
+      container.removeEventListener("wheel", markUserAdjusted);
+      container.removeEventListener("touchstart", markUserAdjusted);
+      container.removeEventListener("dblclick", markUserAdjusted);
+    };
+  }, [map]);
+
+  useMapEvents({
+    dragstart: () => {
+      userAdjustedViewRef.current = true;
+    }
+  });
+
+  useEffect(() => {
+    const scopeChanged = props.scopeKey !== appliedScopeKeyRef.current;
+    const resetRequested = props.resetKey != null && props.resetKey !== appliedResetKeyRef.current;
+    if (scopeChanged || resetRequested) {
+      appliedResetKeyRef.current = props.resetKey;
+      appliedScopeKeyRef.current = props.scopeKey;
+      userAdjustedViewRef.current = false;
+      waitForInitialGpsRef.current = !props.hasGpsLocations;
+      map.fitBounds(props.bounds, { padding: [24, 24] });
+      return;
+    }
+
+    // The initial default view may follow the first valid GPS fix once. User operations own the view afterwards.
+    if (!waitForInitialGpsRef.current || userAdjustedViewRef.current || !props.hasGpsLocations) return;
+    waitForInitialGpsRef.current = false;
+    map.fitBounds(props.bounds, { padding: [24, 24], animate: false });
+  }, [map, props.bounds, props.hasGpsLocations, props.resetKey, props.scopeKey]);
+
   return null;
 }
 
-function ResizeAndFitBounds(props: { bounds: L.LatLngBoundsExpression }) {
+function ResizeAndInvalidateSize() {
   const map = useMap();
 
   useEffect(() => {
@@ -82,7 +132,6 @@ function ResizeAndFitBounds(props: { bounds: L.LatLngBoundsExpression }) {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         map.invalidateSize({ animate: false });
-        map.fitBounds(props.bounds, { padding: [28, 28], animate: false });
       });
     };
 
@@ -96,7 +145,7 @@ function ResizeAndFitBounds(props: { bounds: L.LatLngBoundsExpression }) {
       observer.disconnect();
       window.removeEventListener("resize", refresh);
     };
-  }, [map, props.bounds]);
+  }, [map]);
 
   return null;
 }
@@ -125,31 +174,10 @@ function ClearSelectionOnMapClick(props: { onClear: () => void }) {
 export function RealMapView(props: RealMapViewProps) {
   const configuredTdtKey = (import.meta.env.VITE_TDT_KEY as string | undefined)?.trim();
   const tdtKey = configuredTdtKey || LEGACY_PUBLIC_TDT_KEY;
-  const [tileProvider, setTileProvider] = useState<TileProvider>("tianditu");
-  const tdtTileErrorCountRef = useRef(0);
-  const useTdt = Boolean(tdtKey) && tileProvider === "tianditu";
-  const defaultLat = 24.43803;
-  const defaultLng = 118.09631;
+  const useTdt = Boolean(tdtKey);
+  const defaultLat = DEFAULT_MONITORING_LOCATION.lat;
+  const defaultLng = DEFAULT_MONITORING_LOCATION.lng;
 
-  useEffect(() => {
-    tdtTileErrorCountRef.current = 0;
-    setTileProvider("tianditu");
-  }, [props.layer, props.resetKey, tdtKey]);
-
-  const tdtEventHandlers = useMemo(
-    () => ({
-      load: () => {
-        tdtTileErrorCountRef.current = 0;
-      },
-      tileerror: () => {
-        tdtTileErrorCountRef.current += 1;
-        if (tdtTileErrorCountRef.current >= TDT_TILE_ERROR_THRESHOLD) {
-          setTileProvider("esri");
-        }
-      }
-    }),
-    []
-  );
   const points = useMemo<RealMapPoint[]>(
     () =>
       props.points ??
@@ -167,6 +195,7 @@ export function RealMapView(props: RealMapViewProps) {
       })),
     [props.points, props.stations]
   );
+  const hasGpsLocations = points.some((point) => point.locationSource === "gps");
 
   const icons = useMemo(() => {
     const byId = new Map<string, L.DivIcon>();
@@ -199,9 +228,19 @@ export function RealMapView(props: RealMapViewProps) {
   }, [points, props.selectedStationIds]);
 
   const bounds = useMemo<L.LatLngBoundsExpression>(() => {
-    const pts = points
+    const validPoints = points
       .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng))
       .map((point) => [point.lat, point.lng] as [number, number]);
+    const gpsPoints = points
+      .filter(
+        (point) =>
+          point.locationSource === "gps" &&
+          Number.isFinite(point.lat) &&
+          Number.isFinite(point.lng)
+      )
+      .map((point) => [point.lat, point.lng] as [number, number]);
+    // Prefer real GPS fixes. Default station coordinates remain a fallback until the first fix arrives.
+    const pts = gpsPoints.length ? gpsPoints : validPoints;
     if (!pts.length) return [[defaultLat - 0.05, defaultLng - 0.06], [defaultLat + 0.05, defaultLng + 0.06]];
     const lats = pts.map((point) => point[0]);
     const lngs = pts.map((point) => point[1]);
@@ -211,39 +250,26 @@ export function RealMapView(props: RealMapViewProps) {
     const maxLng = Math.max(...lngs);
     const centerLat = (minLat + maxLat) / 2;
     const centerLng = (minLng + maxLng) / 2;
-    const latSpan = Math.max(maxLat - minLat, 0.018);
-    const lngSpan = Math.max(maxLng - minLng, 0.024);
+    const usesDefaultLocations = !gpsPoints.length && points.some((point) => point.locationSource === "default");
+    const latSpan = Math.max(maxLat - minLat, usesDefaultLocations ? 0.00045 : 0.018);
+    const lngSpan = Math.max(maxLng - minLng, usesDefaultLocations ? 0.0006 : 0.024);
     return [
       [centerLat - latSpan / 2, centerLng - lngSpan / 2],
       [centerLat + latSpan / 2, centerLng + lngSpan / 2],
     ];
   }, [points]);
 
-  const esriImageryAttribution =
-    `Tiles &copy; Esri` +
-    ` &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community`;
-  const esriStreetAttribution = `Tiles &copy; Esri &mdash; Source: Esri, HERE, Garmin, USGS, NGA, EPA, USDA, NPS`;
   const tdtAttribution = `&copy; 天地图`;
 
   const tdtBaseLayer = props.layer === "卫星图" ? "img" : "vec";
   const tdtLabelLayer = props.layer === "卫星图" ? "cia" : "cva";
   const tdtUrl = (layer: string) => `https://t{s}.tianditu.gov.cn/DataServer?T=${layer}_w&x={x}&y={y}&l={z}&tk=${tdtKey}`;
 
-  const fallbackTile =
-    props.layer === "卫星图"
-      ? {
-          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-          attribution: esriImageryAttribution
-        }
-      : {
-          url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-          attribution: esriStreetAttribution
-        };
-
   return (
     <MapContainer
       bounds={bounds}
       boundsOptions={{ padding: [24, 24] }}
+      maxZoom={18}
       style={{ height: "100%", width: "100%" }}
       zoomControl={false}
       doubleClickZoom
@@ -257,45 +283,36 @@ export function RealMapView(props: RealMapViewProps) {
             key={`tianditu-base-${tdtBaseLayer}`}
             url={tdtUrl(tdtBaseLayer)}
             attribution={tdtAttribution}
-            eventHandlers={tdtEventHandlers}
             subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
             maxZoom={18}
             maxNativeZoom={18}
-            detectRetina
             updateWhenIdle
           />
           <TileLayer
             key={`tianditu-label-${tdtLabelLayer}`}
             url={tdtUrl(tdtLabelLayer)}
             attribution={tdtAttribution}
-            eventHandlers={tdtEventHandlers}
             subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
             maxZoom={18}
             maxNativeZoom={18}
-            detectRetina
             updateWhenIdle
           />
         </>
-      ) : (
-        <TileLayer
-          key={`esri-${props.layer}`}
-          url={fallbackTile.url}
-          attribution={fallbackTile.attribution}
-          maxZoom={18}
-          maxNativeZoom={18}
-          detectRetina
-          updateWhenIdle
-        />
-      )}
+      ) : null}
       <RemoveLeafletAttributionPrefix />
-      <ResizeAndFitBounds bounds={bounds} />
-      <RecenterOnReset resetKey={props.resetKey} bounds={bounds} />
+      <ResizeAndInvalidateSize />
+      <MapCoordinateReadout />
+      <MaintainInitialGpsViewport
+        resetKey={props.resetKey}
+        scopeKey={props.scopeKey ?? "scope:none"}
+        bounds={bounds}
+        hasGpsLocations={hasGpsLocations}
+      />
       <ClearSelectionOnMapClick
         onClear={() => {
           props.onSelectStationIds([]);
         }}
       />
-
       {points.map((point) => {
         const icon = icons.get(point.id);
         if (!icon) return null;
@@ -304,9 +321,9 @@ export function RealMapView(props: RealMapViewProps) {
         const m = props.metricsByStationId?.[point.stationId];
         const locationText =
           point.locationSource === "gps"
-            ? "最后有效 GPS"
+            ? null
             : point.locationSource === "default"
-              ? "厦门大学默认位置（等待首次有效 GPS）"
+              ? `${DEFAULT_MONITORING_LOCATION.label}默认位置（等待首次有效 GPS）`
               : "站点登记位置";
 
         return (
@@ -337,7 +354,7 @@ export function RealMapView(props: RealMapViewProps) {
             <Tooltip className="desk-map-tooltip" direction="top" offset={[0, -12]} opacity={1} sticky>
               <div style={{ fontWeight: 900 }}>{point.name}</div>
               <div style={{ opacity: 0.9, fontSize: 12 }}>
-                {risk} · {status} · {locationText}
+                {risk} · {status}{locationText ? ` · ${locationText}` : ""}
               </div>
               <div style={{ opacity: 0.72, fontSize: 11 }}>{point.stationName}</div>
               {m ? (

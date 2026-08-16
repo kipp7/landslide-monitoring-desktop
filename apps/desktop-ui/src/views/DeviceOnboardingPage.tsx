@@ -27,6 +27,7 @@ import type {
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { StatusTag } from "../components/StatusTag";
+import { deviceStateDisplayMetrics } from "../utils/deviceStateFreshness";
 import {
   formatInstallLabelDisplay,
   formatLifecycleStatusDisplay,
@@ -271,6 +272,11 @@ export function DeviceOnboardingPage() {
     () => formalDevices.find((item) => item.id === selectedFormalDeviceId) ?? null,
     [formalDevices, selectedFormalDeviceId]
   );
+  const selectedDeviceMetrics = useMemo(() => deviceStateDisplayMetrics(deviceState), [deviceState]);
+  const selectedSoilTemperatureC =
+    readMetricNumber(selectedDeviceMetrics, "soil_temperature_c") ??
+    readMetricNumber(selectedDeviceMetrics, "temperature_c");
+  const selectedBatteryPct = readMetricNumber(selectedDeviceMetrics, "battery_pct");
   const selectedFormalStation = useMemo(
     () => stations.find((item) => item.id === selectedFormalDevice?.stationId) ?? null,
     [selectedFormalDevice, stations]
@@ -1255,22 +1261,22 @@ export function DeviceOnboardingPage() {
                   </span>
                 </div>
                 <div className="desk-onb-detail-item">
-                  <span className="k">温度</span>
+                  <span className="k">土壤温度</span>
                   <span className="v">
-                    {readMetricNumber(deviceState?.metrics, "temperature_c") ?? "—"}
+                    {selectedSoilTemperatureC == null ? "—" : `${selectedSoilTemperatureC.toFixed(1)} °C`}
                   </span>
                 </div>
                 <div className="desk-onb-detail-item">
                   <span className="k">电量</span>
                   <span className="v">
-                    {readMetricNumber(deviceState?.metrics, "battery_pct") ?? "—"}
+                    {selectedBatteryPct == null ? "—" : `${selectedBatteryPct.toFixed(0)}%`}
                   </span>
                 </div>
                 <div className="desk-onb-detail-item">
                   <span className="k">预警状态</span>
                   <span className="v">
                     {formatWarningFlagDisplay(
-                      deviceState?.metrics?.warning_flag as boolean | null | undefined,
+                      selectedDeviceMetrics.warning_flag as boolean | null | undefined,
                       "-"
                     )}
                   </span>

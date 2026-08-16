@@ -6,7 +6,6 @@ import { useNavigate } from "react-router-dom";
 import type { Device, Station } from "../../api/client";
 import { BaseCard } from "../../components/BaseCard";
 import { RiskTag } from "../../components/RiskTag";
-import { StatusTag } from "../../components/StatusTag";
 import { loadPins, savePins } from "./homePersist";
 
 function hasMeasuredRisk(station: Station) {
@@ -14,7 +13,17 @@ function hasMeasuredRisk(station: Station) {
   return value === "low" || value === "mid" || value === "high";
 }
 
-export function HomeKeySitesCard(props: { loading: boolean; stations: Station[]; devices: Device[] }) {
+function stationStatusLabel(status: Station["status"]) {
+  if (status === "online") return <Tag color="green">在线</Tag>;
+  if (status === "warning") return <Tag color="orange">上报超时</Tag>;
+  return <Tag color="red">离线</Tag>;
+}
+
+export function HomeKeySitesCard(props: {
+  loading: boolean;
+  stations: Station[];
+  devices: Device[];
+}) {
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const [pinnedStationIds, setPinnedStationIds] = useState<string[]>(() => loadPins());
@@ -53,15 +62,16 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
       );
     });
 
-    const riskRank = (risk: Station["risk"]) => {
-      if (risk === "high") return 0;
-      if (risk === "mid") return 1;
+    const riskRank = (station: Station) => {
+      if (!hasMeasuredRisk(station)) return 3;
+      if (station.risk === "high") return 0;
+      if (station.risk === "mid") return 1;
       return 2;
     };
 
     const statusRank = (status: Station["status"]) => {
-      if (status === "warning") return 0;
-      if (status === "offline") return 1;
+      if (status === "offline") return 0;
+      if (status === "warning") return 1;
       return 2;
     };
 
@@ -70,8 +80,8 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
         const ap = pinnedSet.has(a.id) ? 0 : 1;
         const bp = pinnedSet.has(b.id) ? 0 : 1;
         if (ap !== bp) return ap - bp;
-        const ar = riskRank(a.risk);
-        const br = riskRank(b.risk);
+        const ar = riskRank(a);
+        const br = riskRank(b);
         if (ar !== br) return ar - br;
         const as = statusRank(a.status);
         const bs = statusRank(b.status);
@@ -107,7 +117,7 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
 
   return (
     <BaseCard
-      title="重点站点"
+      title="站点运行概览"
       extra={
         <Button
           size="small"
@@ -126,7 +136,10 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
             value={siteArea}
             style={{ width: 160 }}
             onChange={(v) => setSiteArea(v)}
-            options={[{ label: "全部区域", value: "all" }, ...areas.map((a) => ({ label: a, value: a }))]}
+            options={[
+              { label: "全部区域", value: "all" },
+              ...areas.map((a) => ({ label: a, value: a })),
+            ]}
           />
           <Input
             size="small"
@@ -145,16 +158,23 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
           filteredStations.map((st) => {
             const pinned = pinnedSet.has(st.id);
             const list = devicesByStationId.get(st.id) ?? [];
-            const total = Math.max(st.deviceCount, list.length);
+            const total = list.length;
             const online = list.filter((d) => d.status === "online").length;
             const last = list
               .map((d) => d.lastSeenAt)
               .filter(Boolean)
               .sort((a, b) => b.localeCompare(a))[0];
-            const lastText = last ? new Date(last).toLocaleString("zh-CN") : "—";
+            const lastTimestamp = last ? Date.parse(last) : Number.NaN;
+            const lastText =
+              Number.isFinite(lastTimestamp) && lastTimestamp > 0
+                ? new Date(lastTimestamp).toLocaleString("zh-CN")
+                : "从未上报";
             const gnss = list.find((d) => d.type === "gnss") ?? null;
             return (
-              <div className={pinned ? "desk-home-site-row is-pinned" : "desk-home-site-row"} key={st.id}>
+              <div
+                className={pinned ? "desk-home-site-row is-pinned" : "desk-home-site-row"}
+                key={st.id}
+              >
                 <div
                   className="desk-home-site-main"
                   onClick={() => goToStationManagement(st.id)}
@@ -165,17 +185,28 @@ export function HomeKeySitesCard(props: { loading: boolean; stations: Station[];
                     <div className="desk-home-site-name">{st.name}</div>
                     <div className="desk-home-site-tags">
                       {hasMeasuredRisk(st) ? <RiskTag value={st.risk} /> : <Tag>未研判</Tag>}
-                      <StatusTag value={st.status} />
+                      {stationStatusLabel(st.status)}
                       {pinned ? <Tag color="cyan">已固定</Tag> : null}
                     </div>
                   </div>
                   <div className="desk-home-site-meta">
-                    {st.area} · 设备在线 {String(online)}/{String(total)} · 最近上报 {lastText}
+                    {st.area} ·{" "}
+                    {total ? `设备在线 ${String(online)}/${String(total)}` : "暂无登记设备"} ·
+                    最近上报 {lastText}
                   </div>
                 </div>
                 <div className="desk-home-site-actions">
-                  <Button size="small" icon={pinned ? <PushpinFilled /> : <PushpinOutlined />} onClick={() => togglePin(st.id)} />
-                  <Button size="small" type="primary" disabled={!gnss} onClick={() => goToStationGps(st.id)}>
+                  <Button
+                    size="small"
+                    icon={pinned ? <PushpinFilled /> : <PushpinOutlined />}
+                    onClick={() => togglePin(st.id)}
+                  />
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={!gnss}
+                    onClick={() => goToStationGps(st.id)}
+                  >
                     形变
                   </Button>
                   <Button size="small" onClick={() => goToStationManagement(st.id)}>

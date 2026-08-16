@@ -3,6 +3,7 @@ import React, { createContext, useContext, useMemo } from "react";
 import type { ApiClient, ApiMode } from "./client";
 import { createHttpClient } from "./httpClient";
 import { createMockClient } from "./mockClient";
+import { useAuthStore } from "../stores/authStore";
 
 export type ApiProviderConfig = {
   mode: ApiMode;
@@ -29,8 +30,9 @@ export function ApiProvider(props: React.PropsWithChildren<{ config: ApiProvider
   const httpClient = useMemo<ApiClient>(() => {
     const next = {
       baseUrl,
-      getToken: () => token,
-      getRefreshToken: () => refreshToken ?? null,
+      // Read the persisted store at request time so a refreshed token is used by an in-flight retry.
+      getToken: () => useAuthStore.getState().token ?? token,
+      getRefreshToken: () => useAuthStore.getState().refreshToken ?? refreshToken ?? null,
       ...(onAuthTokens ? { onAuthTokens } : {}),
       ...(onAuthFailure ? { onAuthFailure } : {})
     };

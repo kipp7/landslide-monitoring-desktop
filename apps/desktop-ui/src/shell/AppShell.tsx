@@ -1,6 +1,6 @@
 import { AlertOutlined, BellOutlined, EyeOutlined, SoundOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Modal, Tag } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import type { AlertSummaryItem } from "../api/client";
@@ -48,10 +48,19 @@ export function AppShell() {
   const [alarmModalOpen, setAlarmModalOpen] = useState(false);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [alarmAction, setAlarmAction] = useState<"ack" | "resolve" | null>(null);
+  const alarmStatusRequestSequence = useRef(0);
+  const alarmStatusLastAppliedRequest = useRef(0);
 
   const refreshAlarmStatus = useCallback(async (options?: { open?: boolean; selectAlertId?: string }) => {
+    const requestSequence = ++alarmStatusRequestSequence.current;
+    const statusRevision = useFieldAlarmStore.getState().revision;
     try {
       const status = await api.fieldAlarm.getStatus();
+      if (
+        requestSequence < alarmStatusLastAppliedRequest.current ||
+        statusRevision !== useFieldAlarmStore.getState().revision
+      ) return;
+      alarmStatusLastAppliedRequest.current = requestSequence;
       setAlarmStatus(status);
       const preferred = options?.selectAlertId
         ? status.alerts.find((alert) => alert.alertId === options.selectAlertId)
@@ -107,6 +116,8 @@ export function AppShell() {
             : "Windows 值守端已完成现场复核，确认解除当前告警。",
       });
       if (!result.accepted) throw new Error(result.actuator.lastError ?? "现场告警终端未接受命令");
+      // Invalidate status reads started before this accepted transition so they cannot restore stale UI state.
+      alarmStatusRequestSequence.current += 1;
       applyAlarmActionResult(result, selectedAlert.alertId);
       const terminal = getFieldAlarmTerminal(result.actuator);
       if (action === "resolve") {

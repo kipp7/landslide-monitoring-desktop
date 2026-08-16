@@ -1,8 +1,10 @@
 import "leaflet/dist/leaflet.css";
 
 import L from "leaflet";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMap } from "react-leaflet";
+
+import { MapCoordinateReadout } from "./MapCoordinateReadout";
 
 type CoordinatePoint = {
   lat: number;
@@ -17,7 +19,6 @@ type GpsCoordinateMapProps = {
 };
 
 const LEGACY_PUBLIC_TDT_KEY = "cc688e28c157fc3473807854c945f375";
-const TDT_TILE_ERROR_THRESHOLD = 4;
 
 function FitCoordinateBounds({ bounds }: { bounds: L.LatLngBoundsExpression }) {
   const map = useMap();
@@ -46,8 +47,6 @@ function FitCoordinateBounds({ bounds }: { bounds: L.LatLngBoundsExpression }) {
 }
 
 function GpsCoordinateMapComponent({ reference, latest, latestColor }: GpsCoordinateMapProps) {
-  const [tileProvider, setTileProvider] = useState<"tianditu" | "esri">("tianditu");
-  const tileErrorCount = useRef(0);
   const tdtKey =
     (import.meta.env.VITE_TDT_KEY as string | undefined)?.trim() || LEGACY_PUBLIC_TDT_KEY;
   const points = useMemo(
@@ -74,13 +73,6 @@ function GpsCoordinateMapComponent({ reference, latest, latestColor }: GpsCoordi
 
   const tdtUrl = (layer: string) =>
     `https://t{s}.tianditu.gov.cn/DataServer?T=${layer}_w&x={x}&y={y}&l={z}&tk=${tdtKey}`;
-  const tdtEventHandlers = {
-    tileerror: () => {
-      tileErrorCount.current += 1;
-      if (tileErrorCount.current >= TDT_TILE_ERROR_THRESHOLD) setTileProvider("esri");
-    },
-  };
-
   return (
     <div className="desk-gps-location-map" aria-label="定位基线与最新坐标地图">
       <MapContainer
@@ -88,42 +80,29 @@ function GpsCoordinateMapComponent({ reference, latest, latestColor }: GpsCoordi
         boundsOptions={{ padding: [28, 28] }}
         style={{ height: "100%", width: "100%" }}
         zoomControl={false}
-        scrollWheelZoom={false}
+        scrollWheelZoom
         doubleClickZoom
         attributionControl
         preferCanvas
       >
-        {tileProvider === "tianditu" ? (
-          <>
-            <TileLayer
-              url={tdtUrl("vec")}
-              attribution="&copy; 天地图"
-              eventHandlers={tdtEventHandlers}
-              subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
-              maxZoom={18}
-              maxNativeZoom={18}
-              updateWhenIdle
-            />
-            <TileLayer
-              url={tdtUrl("cva")}
-              attribution="&copy; 天地图"
-              eventHandlers={tdtEventHandlers}
-              subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
-              maxZoom={18}
-              maxNativeZoom={18}
-              updateWhenIdle
-            />
-          </>
-        ) : (
-          <TileLayer
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
-            attribution="Tiles &copy; Esri"
-            maxZoom={18}
-            maxNativeZoom={18}
-            updateWhenIdle
-          />
-        )}
+        <TileLayer
+          url={tdtUrl("vec")}
+          attribution="&copy; 天地图"
+          subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
+          maxZoom={18}
+          maxNativeZoom={18}
+          updateWhenIdle
+        />
+        <TileLayer
+          url={tdtUrl("cva")}
+          attribution="&copy; 天地图"
+          subdomains={["0", "1", "2", "3", "4", "5", "6", "7"]}
+          maxZoom={18}
+          maxNativeZoom={18}
+          updateWhenIdle
+        />
         <FitCoordinateBounds bounds={bounds} />
+        <MapCoordinateReadout />
         {reference && latest ? (
           <Polyline
             positions={[

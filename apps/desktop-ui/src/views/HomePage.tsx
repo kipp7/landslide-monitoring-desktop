@@ -1,37 +1,40 @@
 import { ArrowRightOutlined, ReloadOutlined } from "@ant-design/icons";
-import { App as AntApp, Button, Skeleton, Space, Typography } from "antd";
+import { App as AntApp, Button, Skeleton, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import type { DashboardSummary, Device, Station } from "../api/client";
+import type {
+  AlertSeverity,
+  AlertStatus,
+  AlertSummaryItem,
+  DashboardSummary,
+  Device,
+  Station,
+} from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
-import { StatusTag } from "../components/StatusTag";
 import { HomeAnnouncementsCard } from "./home/HomeAnnouncementsCard";
 import { HomeKeySitesCard } from "./home/HomeKeySitesCard";
 import { HomeTodosCard } from "./home/HomeTodosCard";
 import "./home.css";
 
-type HomeAnomaly = {
-  id: string;
-  deviceName: string;
-  stationName: string;
-  status: "online" | "warning" | "offline";
-  time: string;
-  sortTime: number;
-};
-
-function formatLastSeen(value: string) {
+function formatEventTime(value: string) {
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return { label: "从未上报", timestamp: -1 };
-  return { label: new Date(timestamp).toLocaleString("zh-CN"), timestamp };
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "时间未上报";
+  return new Date(timestamp).toLocaleString("zh-CN");
 }
 
-function healthLabel(value: number) {
-  if (value >= 90) return { text: "优秀", color: "#22c55e" };
-  if (value >= 75) return { text: "良好", color: "#60a5fa" };
-  if (value >= 60) return { text: "一般", color: "#f59e0b" };
-  return { text: "需关注", color: "#ef4444" };
+function alertSeverityLabel(value: AlertSeverity) {
+  if (value === "critical") return { text: "严重", color: "red" };
+  if (value === "high") return { text: "高", color: "volcano" };
+  if (value === "medium") return { text: "中", color: "orange" };
+  return { text: "低", color: "blue" };
+}
+
+function alertStatusLabel(value: AlertStatus) {
+  if (value === "active") return { text: "活动", color: "red" };
+  if (value === "acked") return { text: "待复核", color: "gold" };
+  return { text: "已解除", color: "green" };
 }
 
 export function HomePage() {
@@ -42,19 +45,39 @@ export function HomePage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [stations, setStations] = useState<Station[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [pendingAlerts, setPendingAlerts] = useState<AlertSummaryItem[]>([]);
+  const [pendingAlertCounts, setPendingAlertCounts] = useState({ active: 0, acked: 0 });
   const [updatedAt, setUpdatedAt] = useState<string>("");
+  const [loadError, setLoadError] = useState("");
 
   const load = async (silent?: boolean) => {
     if (!silent) setLoading(true);
+    setLoadError("");
     try {
-      const [s, d, st] = await Promise.all([api.dashboard.getSummary(), api.devices.list(), api.stations.list()]);
+      const [s, d, st, activeAlerts, ackedAlerts] = await Promise.all([
+        api.dashboard.getSummary(),
+        api.devices.list(),
+        api.stations.list(),
+        api.alerts.list({ page: 1, pageSize: 5, status: "active" }),
+        api.alerts.list({ page: 1, pageSize: 5, status: "acked" }),
+      ]);
+      const latestPendingAlerts = [...activeAlerts.list, ...ackedAlerts.list]
+        .sort((a, b) => Date.parse(b.lastEventAt) - Date.parse(a.lastEventAt))
+        .slice(0, 5);
       setSummary(s);
       setDevices(d);
       setStations(st);
+      setPendingAlerts(latestPendingAlerts);
+      setPendingAlertCounts({
+        active: activeAlerts.pagination.total,
+        acked: ackedAlerts.pagination.total,
+      });
       setUpdatedAt(new Date().toLocaleString("zh-CN"));
       if (silent) message.success("已刷新");
     } catch (err) {
-      message.error((err as Error).message);
+      const errorMessage = (err as Error).message;
+      setLoadError(errorMessage);
+      message.error(errorMessage);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -64,22 +87,20 @@ export function HomePage() {
     void load();
   }, [api]);
 
-  const anomalies = useMemo<HomeAnomaly[]>(() => {
-    const list = devices
-      .filter((d) => d.status !== "online")
-      .map((d) => {
-        const lastSeen = formatLastSeen(d.lastSeenAt);
-        return {
-          id: d.id,
-          deviceName: d.name,
-          stationName: d.stationId ? d.stationName : "未绑定监测点",
-          status: d.status,
-          time: lastSeen.label,
-          sortTime: lastSeen.timestamp
-        };
-      })
-      .sort((a, b) => b.sortTime - a.sortTime);
-    return list.slice(0, 5);
+  const deviceById = useMemo(
+    () => new Map(devices.map((device) => [device.id, device] as const)),
+    [devices]
+  );
+  const stationById = useMemo(
+    () => new Map(stations.map((station) => [station.id, station] as const)),
+    [stations]
+  );
+
+  const deviceCounts = useMemo(() => {
+    const online = devices.filter((device) => device.status === "online").length;
+    const delayed = devices.filter((device) => device.status === "warning").length;
+    const offline = devices.filter((device) => device.status === "offline").length;
+    return { total: devices.length, online, delayed, offline };
   }, [devices]);
 
   const areaSummary = useMemo(() => {
@@ -88,11 +109,7 @@ export function HomePage() {
     return n ? `${n} 个片区` : "—";
   }, [stations]);
 
-  const health = healthLabel(summary?.systemHealthPercent ?? 0);
-  const totalDeviceCount = summary?.totalDeviceCount;
-  const offlineDeviceCount = summary?.offlineDeviceCount;
-  const freshDeviceCount = summary?.freshDeviceCount;
-  const pendingAlertCount = summary?.pendingAlertCount;
+  const pendingAlertCount = pendingAlertCounts.active + pendingAlertCounts.acked;
 
   return (
     <div className="desk-page">
@@ -104,7 +121,15 @@ export function HomePage() {
           <Typography.Text type="secondary">系统概览与快捷入口</Typography.Text>
         </div>
         <Space size={8}>
-          <Typography.Text type="secondary">{updatedAt ? `更新：${updatedAt}` : "加载中…"}</Typography.Text>
+          {loadError ? (
+            <Typography.Text type="danger">
+              刷新失败{updatedAt ? "，显示上次成功数据" : ""}
+            </Typography.Text>
+          ) : (
+            <Typography.Text type="secondary">
+              {updatedAt ? `更新：${updatedAt}` : "加载中…"}
+            </Typography.Text>
+          )}
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
@@ -118,7 +143,7 @@ export function HomePage() {
 
       <div className="desk-home-grid">
         <div className="desk-home-cell metrics">
-          <BaseCard title="关键指标" extra={summary ? <span style={{ color: health.color, fontWeight: 900 }}>健康：{health.text}</span> : null}>
+          <BaseCard title="关键指标">
             {loading ? (
               <div style={{ padding: 10 }}>
                 <Skeleton active paragraph={{ rows: 3 }} />
@@ -126,28 +151,37 @@ export function HomePage() {
             ) : (
               <div className="desk-home-metrics">
                 <div className="desk-home-metric">
-                  <div className="desk-home-metric-label">监测点</div>
-                  <div className="desk-home-metric-value">{summary ? String(summary.stationCount) : "—"}</div>
+                  <div className="desk-home-metric-label">监测站点</div>
+                  <div className="desk-home-metric-value">
+                    {summary ? String(stations.length) : "—"}
+                  </div>
                   <div className="desk-home-metric-sub">覆盖区域：{areaSummary}</div>
                 </div>
                 <div className="desk-home-metric">
                   <div className="desk-home-metric-label">在线设备</div>
-                  <div className="desk-home-metric-value">{summary ? String(summary.deviceOnlineCount) : "—"}</div>
+                  <div className="desk-home-metric-value">
+                    {summary ? String(deviceCounts.online) : "—"}
+                  </div>
                   <div className="desk-home-metric-sub">
-                    总计 {totalDeviceCount ?? "—"} · 离线 {offlineDeviceCount ?? "—"}
+                    总计 {deviceCounts.total} · 上报超时 {deviceCounts.delayed} · 离线{" "}
+                    {deviceCounts.offline}
                   </div>
                 </div>
                 <div className="desk-home-metric">
-                  <div className="desk-home-metric-label">今日预警</div>
-                  <div className="desk-home-metric-value">{summary ? String(summary.alertCountToday) : "—"}</div>
-                  <div className="desk-home-metric-sub">待处理告警 {pendingAlertCount ?? "—"}</div>
+                  <div className="desk-home-metric-label">待处理告警</div>
+                  <div className="desk-home-metric-value">
+                    {summary ? String(pendingAlertCount) : "—"}
+                  </div>
+                  <div className="desk-home-metric-sub">
+                    活动 {pendingAlertCounts.active} · 待复核 {pendingAlertCounts.acked}
+                  </div>
                 </div>
                 <div className="desk-home-metric">
-                  <div className="desk-home-metric-label">系统健康度</div>
-                  <div className="desk-home-metric-value">{summary ? `${String(summary.systemHealthPercent)}%` : "—"}</div>
-                  <div className="desk-home-metric-sub">
-                    新鲜设备 {freshDeviceCount ?? "—"}/{totalDeviceCount ?? "—"}
+                  <div className="desk-home-metric-label">今日涉及告警</div>
+                  <div className="desk-home-metric-value">
+                    {summary ? String(summary.alertCountToday) : "—"}
                   </div>
+                  <div className="desk-home-metric-sub">今日触发或更新，按告警 ID 去重</div>
                 </div>
               </div>
             )}
@@ -179,7 +213,9 @@ export function HomePage() {
 
               <div className="desk-home-shortcut">
                 <div className="desk-home-shortcut-title">设备管理中心</div>
-                <div className="desk-home-shortcut-desc">设备状态监控、站点管理、基线管理与控制面板。</div>
+                <div className="desk-home-shortcut-desc">
+                  设备状态监控、站点管理、基线管理与控制面板。
+                </div>
                 <div style={{ marginTop: "auto" }}>
                   <Button
                     type="primary"
@@ -195,7 +231,9 @@ export function HomePage() {
 
               <div className="desk-home-shortcut">
                 <div className="desk-home-shortcut-title">形变监测</div>
-                <div className="desk-home-shortcut-desc">位移曲线、阈值配置、预测趋势与导出入口。</div>
+                <div className="desk-home-shortcut-desc">
+                  位移曲线、阈值配置、预测趋势与导出入口。
+                </div>
                 <div style={{ marginTop: "auto" }}>
                   <Button
                     type="primary"
@@ -230,7 +268,7 @@ export function HomePage() {
 
         <div className="desk-home-cell anomalies">
           <BaseCard
-            title="最新异常设备"
+            title="未闭环告警"
             extra={
               <Button
                 size="small"
@@ -245,20 +283,31 @@ export function HomePage() {
             <div className="desk-home-anomaly">
               {loading ? (
                 <Skeleton active paragraph={{ rows: 6 }} />
-              ) : anomalies.length ? (
-                anomalies.map((r) => (
-                  <div className="desk-home-anomaly-row" key={r.id}>
-                    <div className="desk-home-anomaly-left">
-                      <div className="desk-home-anomaly-name">{r.deviceName}</div>
-                      <div className="desk-home-anomaly-meta">
-                        {r.stationName} · {r.time}
+              ) : pendingAlerts.length ? (
+                pendingAlerts.map((alert) => {
+                  const device = alert.deviceId ? deviceById.get(alert.deviceId) : null;
+                  const station = alert.stationId ? stationById.get(alert.stationId) : null;
+                  const severity = alertSeverityLabel(alert.severity);
+                  const status = alertStatusLabel(alert.status);
+                  return (
+                    <div className="desk-home-anomaly-row" key={alert.alertId}>
+                      <div className="desk-home-anomaly-left">
+                        <div className="desk-home-anomaly-name">{alert.title || "未命名告警"}</div>
+                        <div className="desk-home-anomaly-meta">
+                          {station?.name ?? device?.stationName ?? "未绑定站点"} ·{" "}
+                          {device?.name ?? alert.deviceId ?? "未绑定设备"} ·{" "}
+                          {formatEventTime(alert.lastEventAt)}
+                        </div>
+                      </div>
+                      <div className="desk-home-anomaly-tags">
+                        <Tag color={severity.color}>{severity.text}</Tag>
+                        <Tag color={status.color}>{status.text}</Tag>
                       </div>
                     </div>
-                    <StatusTag value={r.status} />
-                  </div>
-                ))
+                  );
+                })
               ) : (
-                <Typography.Text type="secondary">当前无异常</Typography.Text>
+                <Typography.Text type="secondary">当前无待处理告警</Typography.Text>
               )}
             </div>
           </BaseCard>
