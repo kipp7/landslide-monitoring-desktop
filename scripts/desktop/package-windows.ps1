@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $project = Join-Path $repoRoot "apps/windows-shell/LandslideDesk.Win/LandslideDesk.Win.csproj"
+$deskDistDir = Join-Path $repoRoot "apps/desktop-ui/dist"
 $fullOutputDir = Join-Path $repoRoot $OutputDir
 $reportFile = Join-Path $repoRoot "docs/reports/windows-package-latest.json"
 
@@ -24,6 +25,9 @@ if (-not (Test-Path $project)) {
 }
 
 if (-not $SkipDeskBuild.IsPresent) {
+  if (Test-Path $deskDistDir) {
+    Remove-Item -Path $deskDistDir -Recurse -Force
+  }
   Push-Location $repoRoot
   try {
     npm -w apps/desktop-ui run build

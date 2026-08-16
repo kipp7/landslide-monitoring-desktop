@@ -47,7 +47,7 @@ function csvCell(value: string | number | null | undefined): string | number {
 
 export function buildGpsCsvExport(rows: GpsMonitoringExportRow[]): PreparedExport {
   const csvRows = [
-    ["time", "displacement", "horizontal", "vertical", "velocityMmH", "temperature", "humidity", "confidence", "riskLevel", "lat", "lng"],
+    ["time", "displacement", "horizontal", "vertical", "velocityMmH", "soilTemperatureC", "soilMoisturePct", "confidence", "riskLevel", "lat", "lng"],
     ...rows.map((row) => [
       row.time,
       csvCell(row.displacement),

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Baseline, Device, GpsSeries } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
+import { isFormalGnssDevice } from "../utils/deviceCapabilities";
 
 export function GpsPage() {
   const api = useApi();
@@ -24,7 +25,7 @@ export function GpsPage() {
         const [list, baselineList] = await Promise.all([api.devices.list(), api.baselines.list()]);
         if (abort.signal.aborted) return;
         const baselineIds = new Set(baselineList.map((item) => item.deviceId));
-        const gnss = list.filter((d) => d.type === "gnss" && baselineIds.has(d.id));
+        const gnss = list.filter((d) => isFormalGnssDevice(d) && baselineIds.has(d.id));
         setDevices(gnss);
         setBaselines(baselineList);
         setDeviceId((prev) => (prev && baselineIds.has(prev) ? prev : gnss[0]?.id));

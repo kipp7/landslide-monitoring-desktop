@@ -126,6 +126,25 @@ export function createHttpTransport(options: TransportOptions) {
 
   return {
     withJson,
+    async requestStream(path: string, init?: RequestInit, allowRefresh = true): Promise<Response> {
+      const fullPath = path.startsWith("/") ? path : `/${path}`;
+      const res = await fetch(`${baseUrl}${fullPath}`, withAuth(init));
+      if (
+        res.status === 401 &&
+        allowRefresh &&
+        path !== "/api/v1/auth/login" &&
+        path !== "/api/v1/auth/refresh"
+      ) {
+        const refreshed = await refreshTokensOnce();
+        if (refreshed) return this.requestStream(path, init, false);
+        onAuthFailure?.();
+      }
+      if (!res.ok) {
+        const payload = await parseJson(res);
+        throw new Error(pickErrorMessage(payload, `HTTP ${String(res.status)} ${res.statusText}`));
+      }
+      return res;
+    },
     async requestV1<T>(path: string, init?: RequestInit): Promise<T> {
       const payload = await requestJson(path, init);
       if (!isObject(payload)) throw new Error("API 返回格式错误");

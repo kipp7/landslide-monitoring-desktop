@@ -33,7 +33,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppVerName}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\{#MyAppName}
+DefaultDirName={localappdata}\Programs\LandslideDesk
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile=..\LandslideDesk.Win\Assets\LandslideDesk.ico
@@ -47,6 +47,7 @@ WizardSmallImageFile=assets\WizardSmallImage.bmp
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
+MinVersion=10.0.17763
 DisableProgramGroupPage=yes
 ChangesAssociations=no
 
@@ -59,6 +60,11 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#WebView2Bootstrapper}"; DestDir: "{tmp}"; Flags: deleteafterinstall
+
+[InstallDelete]
+; Hashed frontend filenames change on every release. Remove only the previous bundled UI so an
+; upgrade cannot retain or launch stale assets; runtime configuration and user data are preserved.
+Type: filesandordirs; Name: "{app}\web"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

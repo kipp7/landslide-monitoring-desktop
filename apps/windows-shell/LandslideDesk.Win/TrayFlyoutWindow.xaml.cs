@@ -21,7 +21,8 @@ public partial class TrayFlyoutWindow : Window
 
     public void UpdateHeader(string version, string status)
     {
-        HeaderMeta.Text = $"版本 {version} · {status}";
+        HeaderMeta.Text = $"版本 {version}";
+        HeaderStatus.Text = status;
     }
 
     private void OnDeactivated(object sender, EventArgs e)

@@ -13,18 +13,11 @@
     HelpUrl="https://github.com/kipp7/landslide-monitoring-desktop"
     AboutUrl="https://github.com/kipp7/landslide-monitoring-desktop">
 
-    <BootstrapperApplication SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.exe">
-      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.deps.json" Name="LandslideDesk.CustomBA.deps.json" />
-      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.dll" Name="LandslideDesk.CustomBA.dll" />
-      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.runtimeconfig.json" Name="LandslideDesk.CustomBA.runtimeconfig.json" />
-      <Payload SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.ico" Name="LandslideDesk.ico" />
-      <Payload SourceFile="$(var.CustomBAOutputDir)\WixToolset.BootstrapperApplicationApi.dll" />
-      <Payload SourceFile="$(var.CustomBAOutputDir)\mbanative.dll" />
-    </BootstrapperApplication>
+    <BootstrapperApplication SourceFile="$(var.CustomBAOutputDir)\LandslideDesk.CustomBA.exe" />
 
     <Variable Name="InstallFolder"
               Type="formatted"
-              Value="[LocalAppDataFolder]Programs\山体滑坡监测桌面端" />
+              Value="[LocalAppDataFolder]Programs\LandslideDesk" />
 
     <Chain>
       <ExePackage

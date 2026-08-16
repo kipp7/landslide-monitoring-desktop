@@ -3,7 +3,10 @@ import type {
   AccountRole,
   AccountUser,
   AccountUserListResponse,
+  AlertLifecycleEvent,
+  AlertStreamEvent,
   AiPrediction,
+  CompetitionTiltProfile,
   AiPredictionCalibration,
   AiPredictionForecast,
   AiPredictionRiskLevel,
@@ -90,6 +93,8 @@ type V1ListResponse<T> = {
 
 type V1GpsDeformationResponse = {
   deviceId: string;
+  positionProfile?: "rtk-fixed" | "custom";
+  trustedOnly?: boolean;
   points: Array<{
     ts: string;
     distanceMeters: number;
@@ -97,6 +102,7 @@ type V1GpsDeformationResponse = {
     verticalMeters?: number | null;
     latitude?: number | null;
     longitude?: number | null;
+    counts?: { lat?: number; lon?: number };
   }>;
 };
 
@@ -296,12 +302,13 @@ function normalizeSensorTypes(value: unknown): DeviceType[] {
   const normalized = value
     .map((item) => (typeof item === "string" ? item.trim().toLowerCase() : ""))
     .map((item): DeviceType | null => {
-      if (item === "gnss" || item === "gps" || item === "multi_sensor" || item === "multisensor")
-        return "gnss";
+      if (item === "gnss" || item === "gps") return "gnss";
+      if (item === "multi_sensor" || item === "multisensor") return "multi_sensor";
       if (item === "rain" || item === "rainfall") return "rain";
       if (item === "tilt" || item === "inclinometer") return "tilt";
       if (item === "camera" || item === "video") return "camera";
       if (item === "temp_hum" || item === "temperature" || item === "humidity") return "temp_hum";
+      if (item === "field_gateway" || item === "gateway") return "field_gateway";
       return null;
     })
     .filter((item): item is DeviceType => item !== null);
@@ -342,7 +349,7 @@ function mapStationManagementFromV1(
           .map((device) => (typeof device.lastSeenAt === "string" ? device.lastSeenAt : ""))
           .filter((value) => value)
           .sort()
-          .at(-1) ?? new Date().toISOString();
+          .at(-1) ?? null;
       const displayName =
         readNullableString(station.displayName) ??
         readNullableString((metadata as Record<string, unknown>).displayName) ??
@@ -360,6 +367,10 @@ function mapStationManagementFromV1(
         readNullableString(station.lifecycleStatus) ??
         readNullableString((metadata as Record<string, unknown>).lifecycleStatus) ??
         readNullableString((metadata as Record<string, unknown>).lifecycle_status);
+      const riskValue =
+        (metadata as Record<string, unknown>).riskLevel ??
+        (metadata as Record<string, unknown>).risk_level;
+      const normalizedRiskValue = typeof riskValue === "string" ? riskValue.trim().toLowerCase() : "";
 
       return {
         stationId: station.stationId,
@@ -386,9 +397,9 @@ function mapStationManagementFromV1(
               ? ((metadata as Record<string, unknown>).chart_legend_name as string)
               : displayName,
         riskLevel: normalizeManagementRisk(
-          (metadata as Record<string, unknown>).riskLevel ??
-            (metadata as Record<string, unknown>).risk_level
+          riskValue
         ),
+        riskConfigured: ["low", "mid", "medium", "high"].includes(normalizedRiskValue),
         status: normalizeManagementStatus(station.status),
         lat: typeof station.latitude === "number" ? station.latitude : 0,
         lng: typeof station.longitude === "number" ? station.longitude : 0,
@@ -499,6 +510,111 @@ async function fetchAllV1Pages<T>(
 export function createHttpClient(options: HttpClientOptions): ApiClient {
   const transport = createHttpTransport(options);
   const localDevFallback = shouldUseLocalDevFallback(options.baseUrl);
+  const subscribeToAlerts: ApiClient["alerts"]["subscribe"] = (handlers) => {
+    let stopped = false;
+    let reconnectTimer: number | null = null;
+    let controller: AbortController | null = null;
+    let lastEventId = "";
+
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer !== null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, 2000);
+    };
+
+    const consumeBlock = (block: string) => {
+      let eventName = "message";
+      let eventId = "";
+      const dataLines: string[] = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("id:")) eventId = line.slice(3).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (eventId) lastEventId = eventId;
+      if (eventName !== "alert" || dataLines.length === 0) return;
+      try {
+        const raw = asRecord(JSON.parse(dataLines.join("\n")) as unknown);
+        if (!raw || typeof raw.eventId !== "string" || typeof raw.alertId !== "string") return;
+        const severity = raw.severity;
+        const eventType = raw.eventType;
+        if (
+          severity !== "low" &&
+          severity !== "medium" &&
+          severity !== "high" &&
+          severity !== "critical"
+        ) return;
+        if (
+          eventType !== "ALERT_TRIGGER" &&
+          eventType !== "ALERT_UPDATE" &&
+          eventType !== "ALERT_ACK" &&
+          eventType !== "ALERT_RESOLVE"
+        ) return;
+        const evidence = asRecord(raw.evidence) ?? {};
+        handlers.onEvent({
+          type: "alert",
+          eventId: raw.eventId,
+          alertId: raw.alertId,
+          eventType,
+          severity,
+          title: typeof raw.title === "string" ? raw.title : "监测告警",
+          message: typeof raw.message === "string" ? raw.message : "",
+          deviceId: typeof raw.deviceId === "string" ? raw.deviceId : null,
+          stationId: typeof raw.stationId === "string" ? raw.stationId : null,
+          evidence,
+          ...(typeof raw.latitude === "number" ? { latitude: raw.latitude } : {}),
+          ...(typeof raw.longitude === "number" ? { longitude: raw.longitude } : {}),
+          createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString(),
+        } satisfies AlertStreamEvent);
+      } catch {
+        // Keep the stream alive when a single event is malformed.
+      }
+    };
+
+    const connect = async () => {
+      if (stopped) return;
+      controller = new AbortController();
+      try {
+        const headers = new Headers({ Accept: "text/event-stream", "Cache-Control": "no-cache" });
+        if (lastEventId) headers.set("Last-Event-ID", lastEventId);
+        const response = await transport.requestStream("/api/v1/alerts/stream", {
+          headers,
+          signal: controller.signal,
+        });
+        if (!response.body) throw new Error("告警实时流不可用");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        while (!stopped) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          pending = (pending + decoder.decode(chunk.value, { stream: true })).replace(/\r\n/g, "\n");
+          let boundary = pending.indexOf("\n\n");
+          while (boundary >= 0) {
+            consumeBlock(pending.slice(0, boundary));
+            pending = pending.slice(boundary + 2);
+            boundary = pending.indexOf("\n\n");
+          }
+        }
+      } catch (error) {
+        if (!stopped && !(error instanceof DOMException && error.name === "AbortError")) {
+          handlers.onError?.(error instanceof Error ? error : new Error(String(error)));
+        }
+      } finally {
+        controller = null;
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+    return () => {
+      stopped = true;
+      controller?.abort();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+    };
+  };
 
   return {
     auth: {
@@ -978,6 +1094,31 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           }))
           .filter((point) => Number.isFinite(point.value));
       },
+      async getSeriesBatch(input) {
+        const interval = input.interval ?? "1h";
+        const sensorKeys = Array.from(new Set(input.sensorKeys.map((key) => key.trim()).filter(Boolean)));
+        if (!sensorKeys.length) return {};
+        const res = await transport.requestV1<{
+          series: Array<{
+            sensorKey: string;
+            points: Array<{ ts: string; value: unknown }>;
+          }>;
+        }>(
+          `/api/v1/data/series/${encodeURIComponent(input.deviceId)}?startTime=${encodeURIComponent(input.startTime)}&endTime=${encodeURIComponent(input.endTime)}&sensorKeys=${encodeURIComponent(sensorKeys.join(","))}&interval=${encodeURIComponent(interval)}`
+        );
+        return Object.fromEntries(
+          sensorKeys.map((sensorKey) => {
+            const series = res.series.find((item) => item.sensorKey === sensorKey);
+            const points = (series?.points ?? [])
+              .map((point) => ({
+                ts: point.ts,
+                value: typeof point.value === "number" ? point.value : Number(point.value),
+              }))
+              .filter((point) => Number.isFinite(point.value));
+            return [sensorKey, points];
+          })
+        );
+      },
     },
     aiPredictions: {
       async list(input) {
@@ -1031,6 +1172,12 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           summary: { active: number; acked: number; resolved: number; high: number; critical: number };
         }>(`/api/v1/alerts?${params.toString()}`);
       },
+      async getEvents(alertId) {
+        return transport.requestV1<{ alertId: string; events: AlertLifecycleEvent[] }>(
+          `/api/v1/alerts/${encodeURIComponent(alertId)}/events`
+        );
+      },
+      subscribe: subscribeToAlerts,
     },
     fieldAlarm: {
       async getStatus() {
@@ -1049,17 +1196,64 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           })
         );
       },
+      async getCompetitionProfile() {
+        const response = await transport.requestV1<{ profile: CompetitionTiltProfile | null }>(
+          "/api/v1/field-alarm/competition-profile"
+        );
+        return response.profile;
+      },
+      async captureCompetitionBaseline(input) {
+        return transport.requestV1<{
+          profile: CompetitionTiltProfile;
+          skipped: Array<{ deviceId: string; deviceName: string; reason: string }>;
+        }>(
+          "/api/v1/field-alarm/competition-profile/capture",
+          transport.withJson({
+            method: "POST",
+            body: JSON.stringify(input ?? {}),
+          })
+        );
+      },
+      async armCompetitionQuickAlarm(input) {
+        return transport.requestV1<{
+          profile: CompetitionTiltProfile;
+          skipped: Array<{ deviceId: string; deviceName: string; reason: string }>;
+        }>(
+          "/api/v1/field-alarm/competition-profile/quick-arm",
+          transport.withJson({
+            method: "POST",
+            body: JSON.stringify(input ?? {}),
+          })
+        );
+      },
+      async updateCompetitionProfile(input) {
+        const response = await transport.requestV1<{ profile: CompetitionTiltProfile }>(
+          "/api/v1/field-alarm/competition-profile",
+          transport.withJson({
+            method: "PUT",
+            body: JSON.stringify(input),
+          })
+        );
+        return response.profile;
+      },
     },
     gps: {
       async getSeries(input) {
         const days = input.days ?? 7;
-        const range = computeTimeRange(days);
+        const fallbackRange = computeTimeRange(days);
+        const startTime = input.startTime ?? fallbackRange.startTime;
+        const endTime = input.endTime ?? fallbackRange.endTime;
+        const interval = input.interval ?? fallbackRange.interval;
+        const limitQuery = input.limit == null ? "" : `&limit=${encodeURIComponent(String(input.limit))}`;
+        const trustedOnly = input.trustedOnly ?? true;
         const res = await transport.requestV1<V1GpsDeformationResponse>(
-          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/series?startTime=${encodeURIComponent(range.startTime)}&endTime=${encodeURIComponent(range.endTime)}&interval=${encodeURIComponent(range.interval)}`
+          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/series?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&interval=${encodeURIComponent(interval)}&latKey=rtk_latitude_deg&lonKey=rtk_longitude_deg&altKey=rtk_altitude_msl_m&trustedOnly=${trustedOnly ? "true" : "false"}${limitQuery}`
         );
         return {
           deviceId: res.deviceId,
           deviceName: input.deviceId,
+          positionProfile: res.positionProfile ?? (trustedOnly ? "rtk-fixed" : "custom"),
+          trustedOnly: res.trustedOnly ?? trustedOnly,
           points: res.points.map((point) => ({
             ts: point.ts,
             dispMm: Number((point.distanceMeters * 1000).toFixed(2)),
@@ -1070,10 +1264,13 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
               ? { verticalMm: Number((point.verticalMeters * 1000).toFixed(2)) }
               : {}),
             ...(typeof point.latitude === "number"
-              ? { latitude: Number(point.latitude.toFixed(6)) }
+              ? { latitude: Number(point.latitude.toFixed(9)) }
               : {}),
             ...(typeof point.longitude === "number"
-              ? { longitude: Number(point.longitude.toFixed(6)) }
+              ? { longitude: Number(point.longitude.toFixed(9)) }
+              : {}),
+            ...(typeof point.counts?.lat === "number" && typeof point.counts.lon === "number"
+              ? { sampleCount: Math.min(point.counts.lat, point.counts.lon) }
               : {}),
           })),
         };
@@ -1081,6 +1278,7 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
       async getDerivedAnalysis(input): Promise<GpsDerivedAnalysis> {
         const rangeLabel = input.rangeLabel ?? "7d";
         const limit = input.limit ?? 200;
+        const trustedOnly = input.trustedOnly ?? true;
         const res = await transport.requestV1<{
           deviceId: string;
           hasBaseline: boolean;
@@ -1146,7 +1344,7 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
             };
           };
         }>(
-          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/analysis?timeRange=${encodeURIComponent(rangeLabel)}&limit=${encodeURIComponent(String(limit))}`
+          `/api/v1/gps/deformations/${encodeURIComponent(input.deviceId)}/analysis?timeRange=${encodeURIComponent(rangeLabel)}&limit=${encodeURIComponent(String(limit))}&trustedOnly=${trustedOnly ? "true" : "false"}`
         );
 
         const ceemdAnalysis = res.ceemd;
@@ -1492,11 +1690,11 @@ export function createHttpClient(options: HttpClientOptions): ApiClient {
           transport.withJson({
             method: "POST",
             body: JSON.stringify({
-              pointsCount: 20,
+              pointsCount: 50,
               lookbackDays: 30,
-              latKey: "gps_latitude",
-              lonKey: "gps_longitude",
-              altKey: "gps_altitude",
+              latKey: "rtk_latitude_deg",
+              lonKey: "rtk_longitude_deg",
+              altKey: "rtk_altitude_msl_m",
               ...(input.persist === undefined ? {} : { persist: input.persist }),
             }),
           })

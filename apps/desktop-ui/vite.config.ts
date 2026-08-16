@@ -5,6 +5,7 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   build: {
+    emptyOutDir: true,
     cssCodeSplit: false,
     rollupOptions: {
       output: {

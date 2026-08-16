@@ -10,6 +10,7 @@ function titleForPath(pathname: string): string | null {
   if (pathname === "/app" || pathname === "/app/") return "控制台";
   if (pathname.startsWith("/app/home")) return "首页";
   if (pathname.startsWith("/app/analysis")) return "数据大屏";
+  if (pathname.startsWith("/app/review-archive")) return "复核档案";
   if (pathname.startsWith("/app/device-management/onboarding")) return "设备接入与投运";
   if (pathname.startsWith("/app/device-management")) return "设备管理";
   if (pathname.startsWith("/app/gps-monitoring")) return "地质形变监测";

@@ -17,30 +17,85 @@ import {
   Tabs,
   Typography
 } from "antd";
-import { ExportOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
+import { BarsOutlined, DatabaseOutlined, ExportOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import type { AiPrediction, Baseline, Device, GpsDerivedAnalysis, GpsSeries, TelemetrySeriesPoint } from "../api/client";
+import type { AiPrediction, Baseline, Device, DeviceStateSnapshot, GpsDerivedAnalysis, GpsSeries, TelemetrySeriesPoint } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
+import { GpsCoordinateMap } from "../components/GpsCoordinateMap";
+import { extractAiRouteEvidence, regionalRerankLabel, regionalScopeLabel } from "../utils/aiPredictionEvidence";
 import { formatBeijingDateTime, formatBeijingMonthDay, formatBeijingMonthDayTime, formatBeijingTime } from "../utils/beijingTime";
+import { isFormalGnssDevice } from "../utils/deviceCapabilities";
+import {
+  deviceStateDisplayMeta,
+  deviceStateDisplayMetrics,
+  deviceStateScopeUpdatedAt
+} from "../utils/deviceStateFreshness";
+import {
+  DEFAULT_MONITORING_LOCATION,
+  defaultFieldNodeLocation,
+  resolveDefaultFieldNodeCode
+} from "../utils/defaultMonitoringLocation";
 import { buildGpsAnalysisExport, buildGpsChartExport, buildGpsCsvExport, buildGpsReportExport, triggerPreparedExport } from "./gpsMonitoringExport";
 import "./gpsMonitoring.css";
 
 type TimeRange = "1h" | "6h" | "24h" | "7d" | "15d" | "30d";
 type GpsTabKey = "realtime" | "ceemd" | "prediction" | "data";
 type Thresholds = { blue: number; yellow: number; red: number };
-type GpsReferencePoint = { lat: number; lng: number; source: "baseline" | "temporary"; label: string };
+type GpsReferencePoint = {
+  lat: number;
+  lng: number;
+  altitudeM?: number | null;
+  source: "baseline" | "temporary" | "default";
+  label: string;
+};
 type GpsTrendDirection = NonNullable<GpsDerivedAnalysis["trendDiagnostics"]>["direction"];
 type GpsThresholdForecastPoint = NonNullable<NonNullable<GpsDerivedAnalysis["prediction"]>["thresholdForecast"]>["longTerm"]["red"];
+type RtkSolutionSnapshot = {
+  updatedAt: string | null;
+  fresh: boolean;
+  trusted: boolean;
+  displacementEligible: boolean;
+  positionValid: boolean;
+  source: string;
+  fixType: string;
+  ggaQuality: number | null;
+  coordinateFrame: string;
+  latitude: number | null;
+  longitude: number | null;
+  altitudeMslM: number | null;
+  satellites: number | null;
+  hdop: number | null;
+  correctionAgeMs: number | null;
+  solutionAgeMs: number | null;
+  fixedStreakS: number | null;
+  fixedRatioPct: number | null;
+  sigmaHorizontalMm: number | null;
+  sigmaAltitudeMm: number | null;
+  stationId: number | null;
+  rtcmMode: string;
+  rtcmErrorFlags: number | null;
+};
 
 const GPS_THRESHOLD_BLUE_KEY = "gps.displacement_threshold_blue_mm";
 const GPS_THRESHOLD_YELLOW_KEY = "gps.displacement_threshold_yellow_mm";
 const GPS_THRESHOLD_RED_KEY = "gps.displacement_threshold_red_mm";
 const GPS_DATA_LIMIT_KEY = "gps.data_limit";
+function defaultGpsReferencePoint(deviceId: string): GpsReferencePoint {
+  const location = defaultFieldNodeLocation(deviceId);
+  const nodeCode = resolveDefaultFieldNodeCode(deviceId);
+  return {
+    lat: location.lat,
+    lng: location.lng,
+    altitudeM: null,
+    source: "default",
+    label: `${DEFAULT_MONITORING_LOCATION.label}${nodeCode ? `节点 ${nodeCode}` : ""}基线`
+  };
+}
 
 function isTimeRange(value: string): value is TimeRange {
   return value === "1h" || value === "6h" || value === "24h" || value === "7d" || value === "15d" || value === "30d";
@@ -66,23 +121,14 @@ type GpsChartRow = {
   lng: number | null;
 };
 
-function daysFromRange(range: TimeRange) {
-  if (range === "1h") return 1;
-  if (range === "6h") return 1;
-  if (range === "24h") return 1;
-  if (range === "7d") return 7;
-  if (range === "15d") return 15;
-  return 30;
-}
-
-function computeTelemetryWindow(range: TimeRange): { startTime: string; endTime: string; interval: "5m" | "1h" | "1d" } {
+function computeTelemetryWindow(range: TimeRange): { startTime: string; endTime: string; interval: "1m" | "5m" | "1h" | "1d" } {
   const end = new Date();
   const start = new Date(end);
-  let interval: "5m" | "1h" | "1d" = "1h";
+  let interval: "1m" | "5m" | "1h" | "1d" = "1h";
 
   if (range === "1h") {
     start.setHours(start.getHours() - 1);
-    interval = "5m";
+    interval = "1m";
   } else if (range === "6h") {
     start.setHours(start.getHours() - 6);
     interval = "5m";
@@ -94,13 +140,22 @@ function computeTelemetryWindow(range: TimeRange): { startTime: string; endTime:
     interval = "1h";
   } else if (range === "15d") {
     start.setDate(start.getDate() - 15);
-    interval = "1d";
+    interval = "1h";
   } else {
     start.setDate(start.getDate() - 30);
     interval = "1d";
   }
 
   return { startTime: start.toISOString(), endTime: end.toISOString(), interval };
+}
+
+function expectedAggregatedPoints(range: TimeRange): number {
+  if (range === "1h") return 60;
+  if (range === "6h") return 72;
+  if (range === "24h") return 288;
+  if (range === "7d") return 168;
+  if (range === "15d") return 360;
+  return 30;
 }
 
 function bucketKey(ts: string, range: TimeRange): string {
@@ -119,11 +174,119 @@ function formatOptionalNumber(value: number | null | undefined, digits = 2): str
   return value.toFixed(digits);
 }
 
+function metricNumber(metrics: Record<string, unknown>, key: string): number | null {
+  const value = metrics[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function metricBoolean(metrics: Record<string, unknown>, key: string): boolean {
+  const value = metrics[key];
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function metaBoolean(meta: Record<string, unknown>, key: string): boolean | null {
+  const value = meta[key];
+  if (value === true || value === 1 || value === "1" || value === "true") return true;
+  if (value === false || value === 0 || value === "0" || value === "false") return false;
+  return null;
+}
+
+function metaText(meta: Record<string, unknown>, key: string, fallback: string): string {
+  const value = meta[key];
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function buildRtkSolutionSnapshot(snapshot: DeviceStateSnapshot | null): RtkSolutionSnapshot | null {
+  if (!snapshot) return null;
+  const metrics = deviceStateDisplayMetrics(snapshot);
+  const meta = deviceStateDisplayMeta(snapshot);
+  const updatedAt = deviceStateScopeUpdatedAt(snapshot, "core");
+  const updatedMs = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+  const fresh = Number.isFinite(updatedMs) && Date.now() - updatedMs <= 30_000;
+  const sigmaLatMm = metricNumber(metrics, "rtk_gst_sigma_lat_mm");
+  const sigmaLonMm = metricNumber(metrics, "rtk_gst_sigma_lon_mm");
+  const sigmaHorizontalMm = sigmaLatMm !== null && sigmaLonMm !== null
+    ? Math.hypot(sigmaLatMm, sigmaLonMm)
+    : null;
+  const compactErrorFlags = metricNumber(metrics, "rtcm_error_summary_flags");
+  const legacyCounters = [
+    metricNumber(metrics, "rtcm_rejected_fragments_total"),
+    metricNumber(metrics, "rtcm_crc_errors_total"),
+    metricNumber(metrics, "rtcm_queue_drops_total"),
+    metricNumber(metrics, "rtcm_uart_errors_total")
+  ];
+  const legacyErrorFlags = legacyCounters.reduce<number>(
+    (flags, value, index) => flags | ((value ?? 0) > 0 ? 1 << index : 0),
+    0
+  );
+  const latitude = metricNumber(metrics, "rtk_latitude_deg");
+  const longitude = metricNumber(metrics, "rtk_longitude_deg");
+  const positionValid =
+    latitude !== null &&
+    longitude !== null &&
+    Math.abs(latitude) <= 90 &&
+    Math.abs(longitude) <= 180 &&
+    (Math.abs(latitude) > 0.0001 || Math.abs(longitude) > 0.0001);
+  const displacementEligible =
+    metaBoolean(meta, "rtk_displacement_eligible") ??
+    metricBoolean(metrics, "rtk_displacement_eligible");
+  return {
+    updatedAt,
+    fresh,
+    trusted: fresh && metricBoolean(metrics, "rtk_trusted"),
+    displacementEligible: fresh && displacementEligible,
+    positionValid,
+    source: metaText(meta, "gnss_source", "hardware"),
+    fixType: metaText(meta, "rtk_fix_type", "unknown"),
+    ggaQuality: metricNumber(metrics, "rtk_gga_quality"),
+    coordinateFrame: metaText(meta, "rtk_coordinate_frame", "unknown"),
+    latitude,
+    longitude,
+    altitudeMslM: metricNumber(metrics, "rtk_altitude_msl_m"),
+    satellites: metricNumber(metrics, "rtk_satellites_used"),
+    hdop: metricNumber(metrics, "rtk_hdop"),
+    correctionAgeMs: metricNumber(metrics, "rtk_correction_age_ms"),
+    solutionAgeMs: metricNumber(metrics, "rtk_solution_age_ms"),
+    fixedStreakS: metricNumber(metrics, "rtk_fixed_streak_s"),
+    fixedRatioPct: metricNumber(metrics, "rtk_fixed_ratio_1m_pct"),
+    sigmaHorizontalMm,
+    sigmaAltitudeMm: metricNumber(metrics, "rtk_gst_sigma_alt_mm"),
+    stationId: metricNumber(metrics, "rtk_reference_station_id"),
+    rtcmMode: metaText(meta, "rtcm_injection_mode", "disabled"),
+    rtcmErrorFlags: compactErrorFlags ?? (legacyCounters.some((value) => value !== null) ? legacyErrorFlags : null)
+  };
+}
+
 function riskFromDispMm(dispMm: number, thresholds: Thresholds) {
   if (dispMm >= thresholds.red) return 3;
   if (dispMm >= thresholds.yellow) return 2;
   if (dispMm >= thresholds.blue) return 1;
   return 0;
+}
+
+function ggaQualityLabel(quality: number | null, fallbackFixType: string): string {
+  if (quality === 0) return "无有效定位";
+  if (quality === 1) return "单点定位";
+  if (quality === 2) return "差分定位";
+  if (quality === 4) return "RTK Fixed";
+  if (quality === 5) return "RTK Float";
+  if (fallbackFixType === "rtk_fixed") return "RTK Fixed";
+  if (fallbackFixType === "rtk_float") return "RTK Float";
+  if (fallbackFixType === "single") return "单点定位";
+  if (fallbackFixType === "dgps") return "差分定位";
+  if (fallbackFixType === "invalid") return "无有效定位";
+  return fallbackFixType === "unknown" ? "等待解算" : fallbackFixType;
+}
+
+function formatAgeMs(value: number | null): string {
+  if (value === null) return "--";
+  if (value < 1000) return `${Math.max(0, Math.round(value))} ms`;
+  return `${(value / 1000).toFixed(1)} s`;
 }
 
 function riskColor(level: number) {
@@ -222,14 +385,6 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
   return 2 * radius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-function normalizeIdentityClass(value?: string | null): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function isFormalIdentityClass(value?: string | null): boolean {
-  return normalizeIdentityClass(value) === "formal";
-}
-
 function isBaselineMissingError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
@@ -245,9 +400,14 @@ function formatGpsAxisTime(ts: string, range: TimeRange): string {
 function buildRawGpsSeriesFromTelemetry(
   deviceId: string,
   latSeries: TelemetrySeriesPoint[],
-  lngSeries: TelemetrySeriesPoint[]
+  lngSeries: TelemetrySeriesPoint[],
+  options: {
+    positionProfile: "rtk-observed" | "legacy";
+    altitudeSeries?: TelemetrySeriesPoint[];
+    referencePoint?: GpsReferencePoint | null;
+  }
 ): { series: GpsSeries; referencePoint: GpsReferencePoint | null } {
-  const rows = new Map<string, { lat?: number; lng?: number }>();
+  const rows = new Map<string, { lat?: number; lng?: number; altitudeM?: number }>();
 
   for (const point of latSeries) {
     const entry = rows.get(point.ts) ?? {};
@@ -261,12 +421,49 @@ function buildRawGpsSeriesFromTelemetry(
     rows.set(point.ts, entry);
   }
 
-  const ordered = Array.from(rows.entries())
-    .filter((entry): entry is [string, { lat: number; lng: number }] => {
+  for (const point of options.altitudeSeries ?? []) {
+    const entry = rows.get(point.ts) ?? {};
+    entry.altitudeM = point.value;
+    rows.set(point.ts, entry);
+  }
+
+  const coordinateRows = Array.from(rows.entries())
+    .filter((entry): entry is [string, { lat: number; lng: number; altitudeM?: number }] => {
       const value = entry[1];
-      return typeof value.lat === "number" && Number.isFinite(value.lat) && typeof value.lng === "number" && Number.isFinite(value.lng);
+      return (
+        typeof value.lat === "number" &&
+        Number.isFinite(value.lat) &&
+        typeof value.lng === "number" &&
+        Number.isFinite(value.lng) &&
+        Math.abs(value.lat) > 0.0001 &&
+        Math.abs(value.lng) > 0.0001 &&
+        Math.abs(value.lat) <= 90 &&
+        Math.abs(value.lng) <= 180
+      );
     })
     .sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
+
+  let ordered = coordinateRows;
+  if (coordinateRows.length >= 3) {
+    const maxClusterDistanceMeters = 100;
+    let clusterSeed = coordinateRows[0]!;
+    let clusterSize = 0;
+
+    for (const candidate of coordinateRows) {
+      const candidateSize = coordinateRows.filter(
+        (point) => haversineMeters(candidate[1].lat, candidate[1].lng, point[1].lat, point[1].lng) <= maxClusterDistanceMeters
+      ).length;
+      if (candidateSize > clusterSize) {
+        clusterSeed = candidate;
+        clusterSize = candidateSize;
+      }
+    }
+
+    const dominantCluster = coordinateRows.filter(
+      (point) => haversineMeters(clusterSeed[1].lat, clusterSeed[1].lng, point[1].lat, point[1].lng) <= maxClusterDistanceMeters
+    );
+    if (dominantCluster.length >= 2) ordered = dominantCluster;
+  }
 
   if (!ordered.length) {
     return {
@@ -276,32 +473,51 @@ function buildRawGpsSeriesFromTelemetry(
   }
 
   const referenceSeed = ordered.slice(0, Math.min(12, ordered.length));
-  const referenceLat = referenceSeed.reduce((sum, entry) => sum + entry[1].lat, 0) / referenceSeed.length;
-  const referenceLng = referenceSeed.reduce((sum, entry) => sum + entry[1].lng, 0) / referenceSeed.length;
-  const referencePoint: GpsReferencePoint = {
-    lat: Number(referenceLat.toFixed(6)),
-    lng: Number(referenceLng.toFixed(6)),
+  const altitudeSeed = referenceSeed
+    .map((entry) => entry[1].altitudeM)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const generatedReferencePoint: GpsReferencePoint = {
+    lat: Number((referenceSeed.reduce((sum, entry) => sum + entry[1].lat, 0) / referenceSeed.length).toFixed(9)),
+    lng: Number((referenceSeed.reduce((sum, entry) => sum + entry[1].lng, 0) / referenceSeed.length).toFixed(9)),
+    altitudeM: altitudeSeed.length
+      ? Number((altitudeSeed.reduce((sum, value) => sum + value, 0) / altitudeSeed.length).toFixed(3))
+      : null,
     source: "temporary",
     label: "临时参考点"
   };
+  const referencePoint = options.referencePoint ?? generatedReferencePoint;
+  const referenceLat = referencePoint.lat;
+  const referenceLng = referencePoint.lng;
+  const referenceAltitudeM = referencePoint.altitudeM;
 
   return {
     series: {
       deviceId,
       deviceName: deviceId,
+      positionProfile: options.positionProfile === "rtk-observed" ? "custom" : options.positionProfile,
+      trustedOnly: false,
       points: ordered.map(([ts, coords]) => {
         const horizontalMeters = haversineMeters(referenceLat, referenceLng, coords.lat, coords.lng);
         const horizontalMm = Number((horizontalMeters * 1000).toFixed(2));
+        const verticalMm =
+          typeof referenceAltitudeM === "number" && typeof coords.altitudeM === "number"
+            ? Number(((coords.altitudeM - referenceAltitudeM) * 1000).toFixed(2))
+            : null;
+        const displacementMm = verticalMm === null
+          ? horizontalMm
+          : Number(Math.hypot(horizontalMm, verticalMm).toFixed(2));
         return {
           ts,
-          dispMm: horizontalMm,
+          dispMm: displacementMm,
           horizontalMm,
-          latitude: Number(coords.lat.toFixed(6)),
-          longitude: Number(coords.lng.toFixed(6))
+          verticalMm,
+          latitude: Number(coords.lat.toFixed(9)),
+          longitude: Number(coords.lng.toFixed(9)),
+          sampleCount: 1
         };
       })
     },
-    referencePoint
+    referencePoint: referencePoint.source === "temporary" ? referencePoint : null
   };
 }
 
@@ -321,6 +537,7 @@ export function GpsMonitoringPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [series, setSeries] = useState<GpsSeries | null>(null);
   const [derivedAnalysis, setDerivedAnalysis] = useState<GpsDerivedAnalysis | null>(null);
+  const [rtkSolution, setRtkSolution] = useState<RtkSolutionSnapshot | null>(null);
   const [temperatureSeries, setTemperatureSeries] = useState<TelemetrySeriesPoint[]>([]);
   const [humiditySeries, setHumiditySeries] = useState<TelemetrySeriesPoint[]>([]);
   const [lastUpdateTime, setLastUpdateTime] = useState<string>("");
@@ -392,9 +609,7 @@ export function GpsMonitoringPage() {
       try {
         const [deviceList, baselineList] = await Promise.all([api.devices.list(), api.baselines.list()]);
         if (abort.signal.aborted) return;
-        const gnssCandidates = deviceList.filter((d) => d.type === "gnss");
-        const formalGnss = gnssCandidates.filter((d) => isFormalIdentityClass(d.identityClass));
-        const gnss = formalGnss.length > 0 ? formalGnss : gnssCandidates;
+        const gnss = deviceList.filter(isFormalGnssDevice);
         setDevices(gnss);
         setBaselines(baselineList);
         setSelectedDeviceId((prev) => (prev && gnss.some((device) => device.id === prev) ? prev : gnss[0]?.id || ""));
@@ -444,25 +659,55 @@ export function GpsMonitoringPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const days = daysFromRange(timeRange);
       const telemetryWindow = computeTelemetryWindow(timeRange);
       let nextSeries: GpsSeries;
       let nextDerivedAnalysis: GpsDerivedAnalysis | null = null;
       let nextTemporaryReferencePoint: GpsReferencePoint | null = null;
       let nextNotice: string | null = null;
+      const statePromise = api.devices.getState({ deviceId: selectedDeviceId }).catch(() => null);
+      const selectedBaseline = baselines.find((item) => item.deviceId === selectedDeviceId) ?? null;
+      const persistedReferencePoint: GpsReferencePoint = selectedBaseline
+        ? {
+            lat: selectedBaseline.baselineLat,
+            lng: selectedBaseline.baselineLng,
+            altitudeM: selectedBaseline.baselineAlt ?? null,
+            source: "baseline",
+            label: "持久基线"
+          }
+        : defaultGpsReferencePoint(selectedDeviceId);
 
-      try {
-        nextSeries = await api.gps.getSeries({ deviceId: selectedDeviceId, days });
+      const loadRawPositionSeries = async () => {
         try {
-          nextDerivedAnalysis = await api.gps.getDerivedAnalysis({ deviceId: selectedDeviceId, rangeLabel: timeRange, limit: dataLimit });
-        } catch (analysisError) {
-          nextNotice = isBaselineMissingError(analysisError)
-            ? "当前设备尚未建立持久基线，分析页已退化为实时坐标视图。"
-            : `形变分析暂不可用：${analysisError instanceof Error ? analysisError.message : String(analysisError)}`;
-        }
-      } catch (seriesError) {
-        if (!isBaselineMissingError(seriesError)) {
-          throw seriesError;
+          const [latSeries, lngSeries, altitudeSeries] = await Promise.all([
+            api.telemetry.getSeries({
+              deviceId: selectedDeviceId,
+              sensorKey: "rtk_latitude_deg",
+              startTime: telemetryWindow.startTime,
+              endTime: telemetryWindow.endTime,
+              interval: telemetryWindow.interval
+            }),
+            api.telemetry.getSeries({
+              deviceId: selectedDeviceId,
+              sensorKey: "rtk_longitude_deg",
+              startTime: telemetryWindow.startTime,
+              endTime: telemetryWindow.endTime,
+              interval: telemetryWindow.interval
+            }),
+            api.telemetry.getSeries({
+              deviceId: selectedDeviceId,
+              sensorKey: "rtk_altitude_msl_m",
+              startTime: telemetryWindow.startTime,
+              endTime: telemetryWindow.endTime,
+              interval: telemetryWindow.interval
+            }).catch(() => [])
+          ]);
+          return buildRawGpsSeriesFromTelemetry(selectedDeviceId, latSeries, lngSeries, {
+            positionProfile: "rtk-observed",
+            altitudeSeries,
+            referencePoint: persistedReferencePoint
+          });
+        } catch {
+          // Older servers may not expose the RTK profile yet; retain legacy coordinate fallback.
         }
 
         const [latSeries, lngSeries] = await Promise.all([
@@ -481,47 +726,97 @@ export function GpsMonitoringPage() {
             interval: telemetryWindow.interval
           })
         ]);
+        return buildRawGpsSeriesFromTelemetry(selectedDeviceId, latSeries, lngSeries, { positionProfile: "legacy" });
+      };
 
-        const rawGps = buildRawGpsSeriesFromTelemetry(selectedDeviceId, latSeries, lngSeries);
+      try {
+        nextSeries = await api.gps.getSeries({
+          deviceId: selectedDeviceId,
+          startTime: telemetryWindow.startTime,
+          endTime: telemetryWindow.endTime,
+          interval: telemetryWindow.interval,
+          limit: dataLimit,
+          trustedOnly: false
+        });
+        if (!nextSeries.points.length || nextSeries.trustedOnly) {
+          const rawGps = await loadRawPositionSeries();
+          if (rawGps.series.points.length) {
+            nextSeries = rawGps.series;
+            nextTemporaryReferencePoint = rawGps.referencePoint;
+            nextNotice = rawGps.series.positionProfile === "legacy"
+              ? "当前窗口使用兼容定位数据。"
+              : rawGps.referencePoint
+                ? "当前窗口已使用临时参考点计算厘米级位移。"
+                : null;
+          } else if (!nextSeries.points.length) {
+            nextNotice = "当前窗口没有有效 RTK 定位坐标。";
+          }
+        }
+        try {
+          nextDerivedAnalysis = await api.gps.getDerivedAnalysis({
+            deviceId: selectedDeviceId,
+            rangeLabel: timeRange,
+            limit: dataLimit,
+            trustedOnly: false
+          });
+        } catch (analysisError) {
+          nextNotice = isBaselineMissingError(analysisError)
+            ? "当前设备尚未建立持久基线，分析页已退化为实时坐标视图。"
+            : `形变分析暂不可用：${analysisError instanceof Error ? analysisError.message : String(analysisError)}`;
+        }
+      } catch (seriesError) {
+        const rawGps = await loadRawPositionSeries();
         nextSeries = rawGps.series;
         nextTemporaryReferencePoint = rawGps.referencePoint;
-        nextNotice = rawGps.referencePoint
-          ? "当前设备尚未建立持久基线，页面已按实时坐标自动生成临时参考点，仅用于当前窗口查看。"
-          : "当前设备尚未建立持久基线，且当前窗口没有可用定位坐标数据。";
+        if (isBaselineMissingError(seriesError)) {
+          nextNotice = rawGps.referencePoint
+            ? "当前设备尚未建立持久基线，已使用临时参考点计算厘米级位移。"
+            : "当前设备尚未建立持久基线，且当前窗口没有有效 RTK 坐标。";
+        } else {
+          nextNotice = rawGps.series.points.length
+            ? "形变分析接口暂不可用，已使用有效 RTK 坐标计算厘米级位移。"
+            : `形变数据暂不可用：${seriesError instanceof Error ? seriesError.message : String(seriesError)}`;
+        }
       }
 
-      const [temperature, humidity, aiPredictionResult] = await Promise.all([
-        api.telemetry
-          .getSeries({
-            deviceId: selectedDeviceId,
-            sensorKey: "temperature_c",
-            startTime: telemetryWindow.startTime,
-            endTime: telemetryWindow.endTime,
-            interval: telemetryWindow.interval
-          })
-          .catch(() => []),
-        api.telemetry
-          .getSeries({
-            deviceId: selectedDeviceId,
-            sensorKey: "humidity_pct",
-            startTime: telemetryWindow.startTime,
-            endTime: telemetryWindow.endTime,
-            interval: telemetryWindow.interval
-          })
-          .catch(() => []),
+      const loadEnvironmentSeries = async (sensorKeys: string[]) => {
+        for (const sensorKey of sensorKeys) {
+          const points = await api.telemetry
+            .getSeries({
+              deviceId: selectedDeviceId,
+              sensorKey,
+              startTime: telemetryWindow.startTime,
+              endTime: telemetryWindow.endTime,
+              interval: telemetryWindow.interval
+            })
+            .catch(() => []);
+          if (points.length) return points;
+        }
+        return [];
+      };
+
+      const [temperature, humidity, deviceState, aiPredictionResult] = await Promise.all([
+        loadEnvironmentSeries(["soil_temperature_c", "temperature_c"]),
+        loadEnvironmentSeries(["soil_moisture_pct", "humidity_pct"]),
+        statePromise,
         api.aiPredictions
           .list({
             page: 1,
-            pageSize: 1,
+            pageSize: 20,
             deviceId: selectedDeviceId
           })
           .catch(() => null)
       ]);
       setSeries(nextSeries);
       setDerivedAnalysis(nextDerivedAnalysis);
+      setRtkSolution(buildRtkSolutionSnapshot(deviceState));
       setTemperatureSeries(temperature);
       setHumiditySeries(humidity);
-      setLatestAiPrediction(aiPredictionResult?.list[0] ?? null);
+      setLatestAiPrediction(
+        aiPredictionResult?.list.find((prediction) => extractAiRouteEvidence(prediction)?.matchedModelKey) ??
+          aiPredictionResult?.list[0] ??
+          null
+      );
       setTemporaryReferencePoint(nextTemporaryReferencePoint);
       setGpsNotice(nextNotice);
       setLastUpdateTime(formatBeijingDateTime(new Date()));
@@ -536,7 +831,7 @@ export function GpsMonitoringPage() {
 
   useEffect(() => {
     void refresh();
-  }, [dataLimit, selectedDeviceId, timeRange]);
+  }, [baselines, dataLimit, selectedDeviceId, timeRange]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -555,10 +850,27 @@ export function GpsMonitoringPage() {
     [baselines, selectedDeviceId]
   );
   const referencePoint = baseline
-    ? ({ lat: baseline.baselineLat, lng: baseline.baselineLng, source: "baseline", label: "持久基线" } satisfies GpsReferencePoint)
-    : temporaryReferencePoint;
+    ? ({
+        lat: baseline.baselineLat,
+        lng: baseline.baselineLng,
+        altitudeM: baseline.baselineAlt ?? null,
+        source: "baseline",
+        label: "持久基线"
+      } satisfies GpsReferencePoint)
+    : temporaryReferencePoint ?? defaultGpsReferencePoint(selectedDeviceId);
 
   const pts = series?.points ?? [];
+  const rawGpsSampleCount = useMemo(
+    () => pts.reduce((sum, point) => sum + Math.max(1, point.sampleCount ?? 1), 0),
+    [pts]
+  );
+  const seriesIntervalText = useMemo(() => {
+    const interval = computeTelemetryWindow(timeRange).interval;
+    if (interval === "1m") return "1 分钟聚合";
+    if (interval === "5m") return "5 分钟聚合";
+    if (interval === "1h") return "1 小时聚合";
+    return "1 天聚合";
+  }, [timeRange]);
 
   const chartData: GpsChartRow[] = useMemo(() => {
     const temperatureByBucket = new Map<string, number>();
@@ -583,8 +895,8 @@ export function GpsMonitoringPage() {
       const velocityMmH = prev ? Number(((disp - prev.dispMm) / dtHours).toFixed(3)) : 0;
       const riskLevel = riskFromDispMm(disp, thresholds);
       const confidence = readOptionalNumber(derivedAnalysis?.prediction?.confidence ?? derivedAnalysis?.qualityScore, 2);
-      const lat = readOptionalNumber(p.latitude, 6);
-      const lng = readOptionalNumber(p.longitude, 6);
+      const lat = readOptionalNumber(p.latitude, 9);
+      const lng = readOptionalNumber(p.longitude, 9);
 
       rows.push({
         key: `${p.ts}-${i}`,
@@ -607,6 +919,19 @@ export function GpsMonitoringPage() {
   }, [dataLimit, derivedAnalysis?.prediction?.confidence, derivedAnalysis?.qualityScore, humiditySeries, pts, temperatureSeries, thresholds, timeRange]);
 
   const latest = chartData.at(-1) ?? null;
+  const livePosition = rtkSolution?.positionValid && rtkSolution.latitude !== null && rtkSolution.longitude !== null
+    ? {
+        lat: rtkSolution.latitude,
+        lng: rtkSolution.longitude,
+        ts: rtkSolution.updatedAt,
+        altitudeMslM: rtkSolution.altitudeMslM
+      }
+    : null;
+  const displayedPosition = livePosition ?? (
+    latest?.lat != null && latest.lng != null
+      ? { lat: latest.lat, lng: latest.lng, ts: latest.ts, altitudeMslM: null }
+      : null
+  );
   const predictionConfidencePct = derivedAnalysis?.prediction ? Math.round(derivedAnalysis.prediction.confidence * 100) : null;
   const longRedForecast = derivedAnalysis?.prediction?.thresholdForecast?.longTerm.red ?? null;
   const hasEnvData = useMemo(() => chartData.some((row) => row.temperature != null || row.humidity != null), [chartData]);
@@ -617,9 +942,18 @@ export function GpsMonitoringPage() {
 
   const latestDisp = latest?.displacement ?? 0;
   const level = riskFromDispMm(latestDisp, thresholds);
-  const displacementLabel = baseline ? "最新位移（持久基线）" : referencePoint ? "最新位移（临时参考）" : "最新位移";
-  const referenceStatusText = baseline ? "持久基线已建立" : referencePoint ? "临时参考点" : "未形成参考点";
+  const displacementLabel = baseline
+    ? "最新位移（持久基线）"
+    : referencePoint.source === "default"
+      ? "最新位移（南京默认基线）"
+      : "最新位移（临时参考）";
+  const referenceStatusText = baseline
+    ? "持久基线已建立"
+    : referencePoint.source === "default"
+      ? `默认基线：${DEFAULT_MONITORING_LOCATION.label}`
+      : "临时参考点";
   const forecastInference = latestAiPrediction?.forecastInference ?? null;
+  const aiRouteEvidence = extractAiRouteEvidence(latestAiPrediction);
   const riskCalibration = latestAiPrediction?.riskCalibration ?? null;
   const forecastRunStatus = forecastRunStatusText(forecastInference);
   const trendDiagnostics = derivedAnalysis?.trendDiagnostics ?? null;
@@ -647,10 +981,34 @@ export function GpsMonitoringPage() {
               : "未选择";
 
   const quality = useMemo(() => {
-    const expected = Math.min(200, daysFromRange(timeRange) * 24);
+    const expected = Math.min(dataLimit, expectedAggregatedPoints(timeRange));
     const score = expected > 0 ? Math.min(1, pts.length / expected) : 0;
     return { score, pct: Number((score * 100).toFixed(1)) };
-  }, [pts.length, timeRange]);
+  }, [dataLimit, pts.length, timeRange]);
+  const rtkFixLabel = !rtkSolution
+    ? "无 RTK 遥测"
+    : !rtkSolution.fresh
+      ? "遥测过期"
+      : ggaQualityLabel(rtkSolution.ggaQuality, rtkSolution.fixType);
+  const rtkAvailabilityLabel = !rtkSolution
+    ? "等待数据"
+    : !rtkSolution.fresh
+      ? "定位遥测已过期"
+      : rtkSolution.positionValid
+      ? "厘米位移可用"
+      : "当前没有有效定位";
+  const centimeterPositionAvailable = Boolean(rtkSolution?.fresh && rtkSolution.positionValid);
+  const rtkSourceLabel = rtkSolution?.source === "simulated" ? "模拟输入" : "真实硬件";
+  const rtkUpdatedMs = rtkSolution?.updatedAt ? Date.parse(rtkSolution.updatedAt) : Number.NaN;
+  const rtkCoreAgeMs = Number.isFinite(rtkUpdatedMs) ? Math.max(0, Date.now() - rtkUpdatedMs) : null;
+  const ggaCodeLabel = rtkSolution?.ggaQuality == null ? "GGA --" : `GGA ${String(rtkSolution.ggaQuality)}`;
+  const rtkErrorSummary = rtkSolution
+    ? rtkSolution.rtcmErrorFlags === null
+      ? "--"
+      : rtkSolution.rtcmErrorFlags === 0
+        ? "正常"
+        : `异常 0x${rtkSolution.rtcmErrorFlags.toString(16).padStart(2, "0").toUpperCase()}`
+    : "--";
 
   const displacementOption = useMemo(() => {
     return {
@@ -730,7 +1088,7 @@ export function GpsMonitoringPage() {
       textStyle: { color: "rgba(226, 232, 240, 0.9)" },
       tooltip: { trigger: "axis" },
       legend: {
-        data: ["温度", "湿度"],
+        data: ["土壤温度", "土壤水分"],
         top: 10,
         textStyle: { color: "rgba(226, 232, 240, 0.85)", fontSize: 12 }
       },
@@ -742,7 +1100,7 @@ export function GpsMonitoringPage() {
       ],
       series: [
         {
-          name: "温度",
+          name: "土壤温度",
           type: "line",
           smooth: true,
           showSymbol: false,
@@ -752,7 +1110,7 @@ export function GpsMonitoringPage() {
           areaStyle: { color: "rgba(251, 191, 36, 0.10)" }
         },
         {
-          name: "湿度",
+          name: "土壤水分",
           type: "line",
           smooth: true,
           showSymbol: false,
@@ -764,62 +1122,6 @@ export function GpsMonitoringPage() {
       ]
     };
   }, [chartData]);
-
-  const coordOption = useMemo(() => {
-    const baseLat = referencePoint?.lat ?? latest?.lat ?? chartData[0]?.lat ?? 22.684674;
-    const baseLng = referencePoint?.lng ?? latest?.lng ?? chartData[0]?.lng ?? 110.189371;
-    const curLat = latest?.lat ?? null;
-    const curLng = latest?.lng ?? null;
-    const referenceLabel = referencePoint?.source === "temporary" ? "临时参考点" : "基线点";
-
-    const pad = 0.00008;
-    const minLng = Math.min(baseLng, ...(curLng == null ? [] : [curLng])) - pad;
-    const maxLng = Math.max(baseLng, ...(curLng == null ? [] : [curLng])) + pad;
-    const minLat = Math.min(baseLat, ...(curLat == null ? [] : [curLat])) - pad;
-    const maxLat = Math.max(baseLat, ...(curLat == null ? [] : [curLat])) + pad;
-    const points = [
-      {
-        name: referenceLabel,
-        value: [baseLng, baseLat] as [number, number],
-        symbolSize: 16,
-        itemStyle: { color: "#22c55e", shadowBlur: 12, shadowColor: "rgba(34, 211, 238, 0.18)" }
-      },
-      ...(curLat != null && curLng != null
-        ? [
-            {
-              name: "最新点",
-              value: [curLng, curLat] as [number, number],
-              symbolSize: 18,
-              itemStyle: { color: riskColor(level), shadowBlur: 14, shadowColor: "rgba(34, 211, 238, 0.22)" }
-            }
-          ]
-        : [])
-    ];
-
-    return {
-      backgroundColor: "transparent",
-      textStyle: { color: "rgba(226, 232, 240, 0.9)" },
-      tooltip: {
-        trigger: "item",
-        backgroundColor: "rgba(15, 23, 42, 0.92)",
-        borderColor: "rgba(148, 163, 184, 0.22)",
-        textStyle: { color: "rgba(226, 232, 240, 0.92)" },
-        formatter: (p: { data: { name: string; value: [number, number] } }) => {
-          const [lng, lat] = p.data.value;
-          return `${p.data.name}<br/>纬度：${lat.toFixed(6)}<br/>经度：${lng.toFixed(6)}`;
-        }
-      },
-      grid: { left: 10, right: 10, top: 10, bottom: 10 },
-      xAxis: { type: "value", min: minLng, max: maxLng, show: false },
-      yAxis: { type: "value", min: minLat, max: maxLat, show: false },
-      series: [
-        {
-          type: "scatter",
-          data: points
-        }
-      ]
-    };
-  }, [chartData, latest?.lat, latest?.lng, level, referencePoint]);
 
   const ceemdMetrics = useMemo(() => {
     if (!derivedAnalysis?.ceemd) return null;
@@ -1071,11 +1373,11 @@ export function GpsMonitoringPage() {
             />
 
             <Button
-              type={autoRefresh ? "primary" : "default"}
+              className={`desk-gps-toolbtn${autoRefresh ? " active" : ""}`}
               icon={<ReloadOutlined spin={autoRefresh} />}
               onClick={() => setAutoRefresh((v) => !v)}
             >
-              {autoRefresh ? "停止" : "刷新"}
+              {autoRefresh ? "停止刷新" : "自动刷新"}
             </Button>
 
             <Dropdown
@@ -1132,29 +1434,32 @@ export function GpsMonitoringPage() {
               placement="bottomLeft"
               trigger={["click"]}
             >
-              <Button icon={<ExportOutlined />}>导出</Button>
+              <Button className="desk-gps-toolbtn" icon={<ExportOutlined />}>导出</Button>
             </Dropdown>
 
             <Button
+              className="desk-gps-toolbtn"
               icon={<SettingOutlined />}
               onClick={() => {
                 form.setFieldsValue(thresholds);
                 setShowSettings(true);
               }}
             >
-              设置
+              阈值设置
             </Button>
 
             <Button
+              className="desk-gps-toolbtn"
+              icon={<BarsOutlined />}
               onClick={() => {
                 limitForm.setFieldsValue({ limit: dataLimit });
                 setShowLimit(true);
               }}
             >
-              点数设置
+              数据点数
             </Button>
 
-            <Button className="desk-gps-baseline-btn" onClick={() => navigate("/app/device-management?tab=baselines")}>
+            <Button className="desk-gps-toolbtn" icon={<DatabaseOutlined />} onClick={() => navigate("/app/device-management?tab=baselines")}>
               基线管理
             </Button>
             </Space>
@@ -1265,7 +1570,7 @@ export function GpsMonitoringPage() {
         </div>
 
         <div className="desk-gps-stat">
-          <div className="desk-gps-stat-label">数据点数</div>
+          <div className="desk-gps-stat-label">有效聚合点</div>
           <div className="desk-gps-stat-main">
             <span className="desk-gps-stat-value" style={{ color: "rgba(96,165,250,0.95)" }}>
               {chartData.length}
@@ -1273,7 +1578,7 @@ export function GpsMonitoringPage() {
             <span className="desk-gps-stat-unit">条</span>
           </div>
           <div className="desk-gps-stat-sub">
-            范围：{timeRange.toUpperCase()} · 上限：{dataLimit}
+            {seriesIntervalText} · 原始坐标 {rawGpsSampleCount} 组 · 上限 {dataLimit}
           </div>
         </div>
       </div>
@@ -1290,6 +1595,30 @@ export function GpsMonitoringPage() {
               label: "实时监测",
               children: (
                 <Row gutter={[12, 12]}>
+                  <Col span={24}>
+                    <BaseCard title="GNSS / RTK 解算">
+                      {loading ? (
+                        <div className="desk-loading">加载中…</div>
+                      ) : (
+                        <div className="desk-gps-rtk-summary">
+                          <div className="desk-gps-rtk-summary-item is-primary">
+                            <span>位移可用性</span>
+                            <strong style={{ color: centimeterPositionAvailable ? "#22c55e" : "#f59e0b" }}>
+                              {rtkAvailabilityLabel}
+                            </strong>
+                            <small>{rtkSolution?.updatedAt ? `更新 ${formatBeijingDateTime(rtkSolution.updatedAt)}` : "等待核心定位数据"}</small>
+                          </div>
+                          <div className="desk-gps-rtk-summary-item"><span>解算状态</span><strong>{rtkFixLabel}</strong><small>{ggaCodeLabel} · {rtkSourceLabel}</small></div>
+                          <div className="desk-gps-rtk-summary-item"><span>卫星 / HDOP</span><strong>{rtkSolution?.satellites ?? "--"} / {rtkSolution?.hdop?.toFixed(2) ?? "--"}</strong><small>使用卫星 / 水平精度因子</small></div>
+                          <div className="desk-gps-rtk-summary-item"><span>遥测龄 / 解算龄</span><strong>{formatAgeMs(rtkCoreAgeMs)} / {formatAgeMs(rtkSolution?.solutionAgeMs ?? null)}</strong><small>页面接收 / GNSS 解算新鲜度</small></div>
+                          <div className="desk-gps-rtk-summary-item"><span>差分龄 / 坐标系</span><strong>{formatAgeMs(rtkSolution?.correctionAgeMs ?? null)} / {rtkSolution?.coordinateFrame ?? "--"}</strong><small>单点定位时差分龄为空</small></div>
+                          <div className="desk-gps-rtk-summary-item"><span>Fixed 连续 / 1分钟占比</span><strong>{rtkSolution?.fixedStreakS == null ? "--" : `${String(rtkSolution.fixedStreakS)} s`} / {rtkSolution?.fixedRatioPct == null ? "--" : `${rtkSolution.fixedRatioPct.toFixed(1)}%`}</strong><small>稳定性证据</small></div>
+                          <div className="desk-gps-rtk-summary-item"><span>水平 σ / 海拔</span><strong>{rtkSolution?.sigmaHorizontalMm == null ? "--" : `${rtkSolution.sigmaHorizontalMm.toFixed(1)} mm`} / {rtkSolution?.altitudeMslM == null ? "--" : `${rtkSolution.altitudeMslM.toFixed(3)} m`}</strong><small>GST 水平不确定度 / MSL</small></div>
+                          <div className="desk-gps-rtk-summary-item"><span>基准站 / RTCM</span><strong>{rtkSolution?.stationId ?? "--"} / {rtkSolution?.rtcmMode ?? "--"}</strong><small>{rtkErrorSummary}</small></div>
+                        </div>
+                      )}
+                    </BaseCard>
+                  </Col>
                   <Col xs={24} lg={12}>
                     <BaseCard title="位移趋势图">
                       {loading ? (
@@ -1311,7 +1640,7 @@ export function GpsMonitoringPage() {
                       ) : hasEnvData ? (
                         <ReactECharts option={envOption} style={{ height: 320 }} />
                       ) : (
-                        <div className="desk-dm-empty">当前时间窗口内暂无温湿度序列数据。</div>
+                        <div className="desk-dm-empty">当前时间窗口内暂无土壤温度/水分序列数据。</div>
                       )}
                     </BaseCard>
                   </Col>
@@ -1346,16 +1675,18 @@ export function GpsMonitoringPage() {
                     </BaseCard>
                   </Col>
                   <Col span={24}>
-                    <BaseCard title="基线 / 最新坐标">
+                    <BaseCard title="定位基线与最新位置">
                       <div className="desk-gps-coord">
                         <div className="desk-gps-coord-kv">
-                          <div className="desk-gps-coord-title">定位坐标</div>
+                          <div className="desk-gps-coord-title">定位对比</div>
                           <div className="desk-gps-coord-row">
-                            <span className="desk-gps-coord-k">{baseline ? "基线" : "参考点"}</span>
+                            <span className="desk-gps-coord-k">
+                              {baseline ? "基线" : referencePoint.source === "default" ? "默认基线" : "参考点"}
+                            </span>
                             <span className="desk-gps-coord-v">
                               {referencePoint ? (
                                 <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                                  {referencePoint.lat.toFixed(6)}, {referencePoint.lng.toFixed(6)}
+                                  {referencePoint.lat.toFixed(9)}, {referencePoint.lng.toFixed(9)}
                                 </span>
                               ) : (
                                 <span style={{ color: "rgba(148,163,184,0.9)" }}>未建立</span>
@@ -1365,9 +1696,9 @@ export function GpsMonitoringPage() {
                           <div className="desk-gps-coord-row">
                             <span className="desk-gps-coord-k">最新</span>
                             <span className="desk-gps-coord-v">
-                              {latest?.lat != null && latest?.lng != null ? (
+                              {displayedPosition ? (
                                 <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                                  {latest.lat.toFixed(6)}, {latest.lng.toFixed(6)}
+                                  {displayedPosition.lat.toFixed(9)}, {displayedPosition.lng.toFixed(9)}
                                 </span>
                               ) : (
                                 <span style={{ color: "rgba(148,163,184,0.9)" }}>--</span>
@@ -1375,20 +1706,36 @@ export function GpsMonitoringPage() {
                             </span>
                           </div>
                           <div className="desk-gps-coord-row">
-                            <span className="desk-gps-coord-k">风险</span>
+                            <span className="desk-gps-coord-k">平面距离</span>
+                            <span className="desk-gps-coord-v">{formatOptionalNumber(latest?.horizontal, 2)} mm</span>
+                          </div>
+                          <div className="desk-gps-coord-row">
+                            <span className="desk-gps-coord-k">采集时间</span>
+                            <span className="desk-gps-coord-v">{displayedPosition?.ts ? formatBeijingDateTime(displayedPosition.ts) : "--"}</span>
+                          </div>
+                          <div className="desk-gps-coord-row">
+                            <span className="desk-gps-coord-k">海拔（MSL）</span>
+                            <span className="desk-gps-coord-v">{displayedPosition?.altitudeMslM == null ? "--" : `${displayedPosition.altitudeMslM.toFixed(3)} m`}</span>
+                          </div>
+                          <div className="desk-gps-coord-row">
+                            <span className="desk-gps-coord-k">状态</span>
                             <span className="desk-gps-coord-v">
                               <Tag color={riskColor(level)} style={{ fontWeight: 800, marginInlineEnd: 0 }}>
                                 {riskDesc(level)}
                               </Tag>
                             </span>
                           </div>
-                          <div className="desk-gps-coord-tip">{referenceStatusText}。坐标图展示参考点与当前最新定位点位。</div>
+                          <div className="desk-gps-coord-tip">{referenceStatusText}</div>
                         </div>
                         <div className="desk-gps-coord-chart">
                           {loading ? (
                             <div className="desk-loading">加载中…</div>
-                          ) : hasCoordData || referencePoint ? (
-                            <ReactECharts option={coordOption} style={{ height: 220 }} />
+                          ) : displayedPosition || hasCoordData || referencePoint ? (
+                            <GpsCoordinateMap
+                              reference={referencePoint ? { lat: referencePoint.lat, lng: referencePoint.lng, label: referencePoint.label } : null}
+                              latest={displayedPosition ? { lat: displayedPosition.lat, lng: displayedPosition.lng, label: "最新位置" } : null}
+                              latestColor={riskColor(level)}
+                            />
                           ) : (
                             <div className="desk-dm-empty">当前没有可展示的定位坐标点。</div>
                           )}
@@ -1567,6 +1914,26 @@ export function GpsMonitoringPage() {
                           </div>
                         </div>
                         <div className="desk-gps-forecast-card">
+                          <div className="desk-gps-forecast-k">区域专家</div>
+                          <div className="desk-gps-forecast-v">
+                            {aiRouteEvidence?.matchedModelKey ? regionalScopeLabel(aiRouteEvidence.matchedScopeType) : "等待路由"}
+                          </div>
+                          <div className="desk-gps-forecast-sub" title={aiRouteEvidence?.matchedModelKey ?? undefined}>
+                            {aiRouteEvidence?.matchedModelKey ?? "尚无区域专家推理记录"}
+                          </div>
+                        </div>
+                        <div className="desk-gps-forecast-card">
+                          <div className="desk-gps-forecast-k">路由证据</div>
+                          <div className="desk-gps-forecast-v">
+                            {aiRouteEvidence?.candidateCount == null ? "--" : `${aiRouteEvidence.candidateCount} 个候选`}
+                          </div>
+                          <div className="desk-gps-forecast-sub">
+                            {aiRouteEvidence?.matchedModelKey
+                              ? `匹配分 ${aiRouteEvidence.matchScore == null ? "未上报" : aiRouteEvidence.matchScore.toFixed(3)} · ${regionalRerankLabel(aiRouteEvidence.rerankMode)}`
+                              : "等待 ai_predictions 返回匹配与重排证据"}
+                          </div>
+                        </div>
+                        <div className="desk-gps-forecast-card">
                           <div className="desk-gps-forecast-k">风险参考</div>
                           <div className="desk-gps-forecast-v" style={{ color: aiRiskColor(latestAiPrediction?.riskLevel ?? null) }}>
                             {latestAiPrediction ? aiRiskDesc(latestAiPrediction.riskLevel) : "--"}
@@ -1731,10 +2098,10 @@ export function GpsMonitoringPage() {
                         { title: "垂直(mm)", dataIndex: "vertical", width: 110, render: (v: number | null) => formatOptionalNumber(v, 2) },
                         { title: "速度(mm/h)", dataIndex: "velocityMmH", width: 120, render: (v: number) => formatOptionalNumber(v, 3) },
                         { title: "置信度", dataIndex: "confidence", width: 110, render: (v: number | null) => formatOptionalNumber(v, 2) },
-                        { title: "温度(°C)", dataIndex: "temperature", width: 110, render: (v: number | null) => formatOptionalNumber(v, 1) },
-                        { title: "湿度(%)", dataIndex: "humidity", width: 100, render: (v: number | null) => formatOptionalNumber(v, 0) },
-                        { title: "纬度", dataIndex: "lat", width: 120, render: (v: number | null) => formatOptionalNumber(v, 6) },
-                        { title: "经度", dataIndex: "lng", width: 120, render: (v: number | null) => formatOptionalNumber(v, 6) }
+                        { title: "土壤温度(°C)", dataIndex: "temperature", width: 125, render: (v: number | null) => formatOptionalNumber(v, 1) },
+                        { title: "土壤水分(%)", dataIndex: "humidity", width: 115, render: (v: number | null) => formatOptionalNumber(v, 0) },
+                        { title: "纬度", dataIndex: "lat", width: 150, render: (v: number | null) => formatOptionalNumber(v, 9) },
+                        { title: "经度", dataIndex: "lng", width: 150, render: (v: number | null) => formatOptionalNumber(v, 9) }
                       ]}
                     />
                   </div>

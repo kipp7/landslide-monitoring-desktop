@@ -27,6 +27,7 @@ import type {
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
 import { StatusTag } from "../components/StatusTag";
+import { deviceStateDisplayMetrics } from "../utils/deviceStateFreshness";
 import {
   formatInstallLabelDisplay,
   formatLifecycleStatusDisplay,
@@ -200,7 +201,7 @@ export function DeviceOnboardingPage() {
   const [newStationSlopeCode, setNewStationSlopeCode] = useState<string>("");
   const [newStationLocationName, setNewStationLocationName] = useState<string>("");
   const [newStationGatewayCode, setNewStationGatewayCode] = useState<string>("");
-  const [newStationRiskLevel, setNewStationRiskLevel] = useState<"low" | "mid" | "high">("low");
+  const [newStationRiskLevel, setNewStationRiskLevel] = useState<"low" | "mid" | "high" | undefined>(undefined);
   const [bindingSubmitting, setBindingSubmitting] = useState(false);
   const [rebindSubmitting, setRebindSubmitting] = useState(false);
   const [commissioningSubmitting, setCommissioningSubmitting] = useState(false);
@@ -271,6 +272,11 @@ export function DeviceOnboardingPage() {
     () => formalDevices.find((item) => item.id === selectedFormalDeviceId) ?? null,
     [formalDevices, selectedFormalDeviceId]
   );
+  const selectedDeviceMetrics = useMemo(() => deviceStateDisplayMetrics(deviceState), [deviceState]);
+  const selectedSoilTemperatureC =
+    readMetricNumber(selectedDeviceMetrics, "soil_temperature_c") ??
+    readMetricNumber(selectedDeviceMetrics, "temperature_c");
+  const selectedBatteryPct = readMetricNumber(selectedDeviceMetrics, "battery_pct");
   const selectedFormalStation = useMemo(
     () => stations.find((item) => item.id === selectedFormalDevice?.stationId) ?? null,
     [selectedFormalDevice, stations]
@@ -299,7 +305,7 @@ export function DeviceOnboardingPage() {
       setNewStationSlopeCode("");
       setNewStationLocationName("");
       setNewStationGatewayCode("");
-      setNewStationRiskLevel("low");
+      setNewStationRiskLevel(undefined);
       return;
     }
 
@@ -315,7 +321,7 @@ export function DeviceOnboardingPage() {
     setNewStationSlopeCode("");
     setNewStationLocationName("");
     setNewStationGatewayCode(selectedPending.gatewayCode ?? "");
-    setNewStationRiskLevel("low");
+    setNewStationRiskLevel(undefined);
   }, [selectedPending?.deviceId, stations.length]);
 
   useEffect(() => {
@@ -465,7 +471,8 @@ export function DeviceOnboardingPage() {
         normalizedNewStationName &&
         normalizedNewStationDisplayName &&
         normalizedNewStationRegionCode &&
-        normalizedNewStationSlopeCode)
+        normalizedNewStationSlopeCode &&
+        newStationRiskLevel)
   );
 
   const newStationPreviewName = normalizedNewStationDisplayName || normalizedNewStationName || "—";
@@ -501,7 +508,7 @@ export function DeviceOnboardingPage() {
                   ? { locationName: newStationLocationName.trim() }
                   : {}),
                 ...(resolvedBindingGatewayCode ? { gatewayCode: resolvedBindingGatewayCode } : {}),
-                riskLevel: newStationRiskLevel,
+                riskLevel: newStationRiskLevel!,
               },
             }),
         deviceName: selectedPending.runtimeName,
@@ -1005,6 +1012,7 @@ export function DeviceOnboardingPage() {
                         <label>风险等级</label>
                         <Select
                           value={newStationRiskLevel}
+                          placeholder="请选择风险等级"
                           onChange={(value) => setNewStationRiskLevel(value)}
                           options={[
                             { value: "low", label: "低" },
@@ -1253,22 +1261,22 @@ export function DeviceOnboardingPage() {
                   </span>
                 </div>
                 <div className="desk-onb-detail-item">
-                  <span className="k">温度</span>
+                  <span className="k">土壤温度</span>
                   <span className="v">
-                    {readMetricNumber(deviceState?.metrics, "temperature_c") ?? "—"}
+                    {selectedSoilTemperatureC == null ? "—" : `${selectedSoilTemperatureC.toFixed(1)} °C`}
                   </span>
                 </div>
                 <div className="desk-onb-detail-item">
                   <span className="k">电量</span>
                   <span className="v">
-                    {readMetricNumber(deviceState?.metrics, "battery_pct") ?? "—"}
+                    {selectedBatteryPct == null ? "—" : `${selectedBatteryPct.toFixed(0)}%`}
                   </span>
                 </div>
                 <div className="desk-onb-detail-item">
                   <span className="k">预警状态</span>
                   <span className="v">
                     {formatWarningFlagDisplay(
-                      deviceState?.metrics?.warning_flag as boolean | null | undefined,
+                      selectedDeviceMetrics.warning_flag as boolean | null | undefined,
                       "-"
                     )}
                   </span>

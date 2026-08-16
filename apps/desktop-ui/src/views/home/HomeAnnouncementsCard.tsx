@@ -1,5 +1,17 @@
 import { BellOutlined, PlusOutlined } from "@ant-design/icons";
-import { App as AntApp, Badge, Button, Form, Input, Modal, Select, Skeleton, Space, Tag, Typography } from "antd";
+import {
+  App as AntApp,
+  Badge,
+  Button,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Skeleton,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -12,9 +24,13 @@ import {
   loadAnnouncementRead,
   loadAnnouncements,
   saveAnnouncementRead,
-  saveAnnouncements
+  saveAnnouncements,
 } from "./homePersist";
-import type { HomeAnnouncement, HomeAnnouncementLevel, HomeAnnouncementPersist } from "./homePersist";
+import type {
+  HomeAnnouncement,
+  HomeAnnouncementLevel,
+  HomeAnnouncementPersist,
+} from "./homePersist";
 
 export function HomeAnnouncementsCard(props: { loading: boolean }) {
   const navigate = useNavigate();
@@ -25,7 +41,9 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
   const hostInfo = getDeskHostInfo();
 
   const [persist, setPersist] = useState<HomeAnnouncementPersist>(() => loadAnnouncements());
-  const [readAtById, setReadAtById] = useState<Record<string, string>>(() => loadAnnouncementRead(userId));
+  const [readAtById, setReadAtById] = useState<Record<string, string>>(() =>
+    loadAnnouncementRead(userId)
+  );
   const [detail, setDetail] = useState<HomeAnnouncement | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -51,10 +69,15 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
   const announcements = useMemo(() => {
     const unique = new Map<string, HomeAnnouncement>();
     for (const a of persist.items) unique.set(a.id, a);
-    return Array.from(unique.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
+    return Array.from(unique.values())
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 10);
   }, [persist.items]);
 
-  const unreadCount = useMemo(() => announcements.filter((a) => !readAtById[a.id]).length, [announcements, readAtById]);
+  const unreadCount = useMemo(
+    () => announcements.filter((a) => !readAtById[a.id]).length,
+    [announcements, readAtById]
+  );
 
   const markRead = (id: string) => {
     setReadAtById((prev) => ({ ...prev, [id]: new Date().toISOString() }));
@@ -75,8 +98,8 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
 
   const deleteAnnouncement = (id: string) => {
     modal.confirm({
-      title: "删除公告",
-      content: "该操作只影响当前桌面端的本地公告记录，不会删除后端业务数据。",
+      title: "删除本机备忘",
+      content: "该操作只删除当前电脑上的记录，不会修改云端业务数据。",
       okText: "删除",
       cancelText: "取消",
       okButtonProps: { danger: true },
@@ -88,7 +111,7 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
           return next;
         });
         message.success("已删除");
-      }
+      },
     });
   };
 
@@ -111,10 +134,10 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
         title,
         body,
         createdAt: new Date().toISOString(),
-        ...(route ? { route } : {})
+        ...(route ? { route } : {}),
       };
       setPersist((prev) => ({ ...prev, items: [next, ...prev.items] }));
-      message.success("已发布公告");
+      message.success("已保存到本机");
       setCreateOpen(false);
     } catch (err) {
       if (err instanceof Error) message.error(err.message);
@@ -128,7 +151,7 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
       <BaseCard
         title={
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <BellOutlined /> 系统公告
+            <BellOutlined /> 本机备忘
           </span>
         }
         extra={
@@ -139,7 +162,7 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
             </Button>
             {user?.role === "admin" ? (
               <Button size="small" icon={<PlusOutlined />} onClick={openCreate}>
-                发布
+                新建
               </Button>
             ) : null}
           </Space>
@@ -157,14 +180,22 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
           {props.loading ? (
             <Skeleton active paragraph={{ rows: 4 }} />
           ) : !announcements.length ? (
-            <Typography.Text type="secondary">暂无公告</Typography.Text>
+            <Typography.Text type="secondary">暂无本机备忘</Typography.Text>
           ) : (
             announcements.map((a) => {
               const read = !!readAtById[a.id];
               const lvl = announcementLabel(a.level);
               return (
-                <div className={read ? "desk-home-ann-row is-read" : "desk-home-ann-row"} key={a.id}>
-                  <div className="desk-home-ann-main" role="button" tabIndex={0} onClick={() => openDetail(a)}>
+                <div
+                  className={read ? "desk-home-ann-row is-read" : "desk-home-ann-row"}
+                  key={a.id}
+                >
+                  <div
+                    className="desk-home-ann-main"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openDetail(a)}
+                  >
                     <div className="desk-home-ann-title">
                       {!read ? <span className="desk-home-ann-dot" /> : null}
                       <span className="t">{a.title}</span>
@@ -190,9 +221,9 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
       </BaseCard>
 
       <Modal
-        title="发布公告"
+        title="新建本机备忘"
         open={createOpen}
-        okText="发布"
+        okText="保存"
         cancelText="取消"
         confirmLoading={submitting}
         onOk={() => {
@@ -204,14 +235,14 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
       >
         <Form form={form} layout="vertical">
           <Form.Item name="title" label="标题" rules={[{ required: true, message: "请输入标题" }]}>
-            <Input placeholder="例如：系统维护通知" />
+            <Input placeholder="例如：检查 A 节点供电" />
           </Form.Item>
           <Form.Item name="level" label="级别" rules={[{ required: true, message: "请选择级别" }]}>
             <Select
               options={[
                 { value: "info", label: "信息" },
                 { value: "warning", label: "提醒" },
-                { value: "critical", label: "重要" }
+                { value: "critical", label: "重要" },
               ]}
             />
           </Form.Item>
@@ -219,13 +250,13 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
             <Input placeholder="例如：/app/gps-monitoring" />
           </Form.Item>
           <Form.Item name="body" label="正文" rules={[{ required: true, message: "请输入正文" }]}>
-            <Input.TextArea rows={4} placeholder="公告正文（支持多行）" />
+            <Input.TextArea rows={4} placeholder="记录需要在本机跟进的内容" />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={detail?.title ?? "公告详情"}
+        title={detail?.title ?? "备忘详情"}
         open={!!detail}
         okText={detail?.route ? "前往" : "关闭"}
         cancelText="关闭"
@@ -240,7 +271,9 @@ export function HomeAnnouncementsCard(props: { loading: boolean }) {
             <Typography.Paragraph style={{ marginBottom: 8, color: "rgba(226,232,240,0.92)" }}>
               {detail.body}
             </Typography.Paragraph>
-            <Typography.Text type="secondary">{new Date(detail.createdAt).toLocaleString("zh-CN")}</Typography.Text>
+            <Typography.Text type="secondary">
+              {new Date(detail.createdAt).toLocaleString("zh-CN")}
+            </Typography.Text>
           </div>
         ) : null}
       </Modal>

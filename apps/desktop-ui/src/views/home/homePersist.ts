@@ -45,6 +45,8 @@ export const HOME_PINS_KEY = "desk.home.pins.v1";
 export const HOME_ANN_KEY = "desk.home.announcements.v1";
 export const HOME_ANN_READ_PREFIX = "desk.home.announcements.read.v1.";
 
+const LEGACY_SAMPLE_ANNOUNCEMENT_IDS = new Set(["sys:delivery-check", "sys:duty-reminder"]);
+
 export function safeJsonParse<T>(raw: string | null): T | null {
   if (!raw) return null;
   try {
@@ -61,7 +63,8 @@ export function loadTodos(): HomeTodoPersist {
     return {
       version: 1,
       manualTasks: Array.isArray(parsed.manualTasks) ? parsed.manualTasks : [],
-      doneAtById: parsed.doneAtById && typeof parsed.doneAtById === "object" ? parsed.doneAtById : {}
+      doneAtById:
+        parsed.doneAtById && typeof parsed.doneAtById === "object" ? parsed.doneAtById : {},
     };
   } catch {
     return { version: 1, manualTasks: [], doneAtById: {} };
@@ -78,7 +81,9 @@ export function saveTodos(next: HomeTodoPersist) {
 
 export function loadPins(): string[] {
   try {
-    const parsed = safeJsonParse<{ version: number; pinnedStationIds: string[] }>(localStorage.getItem(HOME_PINS_KEY));
+    const parsed = safeJsonParse<{ version: number; pinnedStationIds: string[] }>(
+      localStorage.getItem(HOME_PINS_KEY)
+    );
     if (!parsed || parsed.version !== 1) return [];
     if (!Array.isArray(parsed.pinnedStationIds)) return [];
     return parsed.pinnedStationIds.filter((v) => typeof v === "string");
@@ -95,36 +100,18 @@ export function savePins(pinnedStationIds: string[]) {
   }
 }
 
-export function defaultAnnouncements(): HomeAnnouncement[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "sys:delivery-check",
-      level: "info",
-      title: "上线前检查",
-      body: "请在交付前确认接口地址、告警通道、值守通知和设备身份信息均已完成配置，并校验桌面端与后端时间同步。",
-      createdAt: now,
-      route: "/app/settings"
-    },
-    {
-      id: "sys:duty-reminder",
-      level: "warning",
-      title: "值守提醒：雨季加强巡查与复核",
-      body: "雨季或强降雨期间，请加强重点站点巡检频次，并重点关注 GNSS 位移速度、雨量峰值与设备离线情况。",
-      createdAt: now
-    }
-  ];
-}
-
 export function loadAnnouncements(): HomeAnnouncementPersist {
   try {
     const parsed = safeJsonParse<HomeAnnouncementPersist>(localStorage.getItem(HOME_ANN_KEY));
     if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.items)) {
-      return { version: 1, items: defaultAnnouncements() };
+      return { version: 1, items: [] };
     }
-    return { version: 1, items: parsed.items };
+    return {
+      version: 1,
+      items: parsed.items.filter((item) => !LEGACY_SAMPLE_ANNOUNCEMENT_IDS.has(item.id)),
+    };
   } catch {
-    return { version: 1, items: defaultAnnouncements() };
+    return { version: 1, items: [] };
   }
 }
 
@@ -138,7 +125,9 @@ export function saveAnnouncements(next: HomeAnnouncementPersist) {
 
 export function loadAnnouncementRead(userId: string): Record<string, string> {
   try {
-    const parsed = safeJsonParse<Record<string, string>>(localStorage.getItem(`${HOME_ANN_READ_PREFIX}${userId}`));
+    const parsed = safeJsonParse<Record<string, string>>(
+      localStorage.getItem(`${HOME_ANN_READ_PREFIX}${userId}`)
+    );
     if (!parsed || typeof parsed !== "object") return {};
     return parsed;
   } catch {
@@ -179,7 +168,6 @@ export function createId(prefix: string) {
 }
 
 export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTask[] {
-  const now = new Date().toISOString();
   const tasks: HomeTask[] = [];
 
   for (const d of devices) {
@@ -190,12 +178,12 @@ export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTa
         title: `检查离线设备：${d.name}`,
         description: "建议检查供电、通信链路、天线/线路与现场环境；必要时安排现场巡检。",
         stationId: d.stationId,
-        stationName: d.stationName,
+        stationName: d.stationId ? d.stationName : "未绑定监测点",
         deviceId: d.id,
         deviceName: d.name,
         category: "device",
         priority: "high",
-        createdAt: d.lastSeenAt
+        createdAt: d.lastSeenAt,
       });
     }
 
@@ -203,43 +191,36 @@ export function buildSystemTasks(stations: Station[], devices: Device[]): HomeTa
       tasks.push({
         id: `sys:device-warning:${d.id}`,
         source: "system",
-        title: `复核预警设备：${d.name}`,
-        description: "建议核对阈值/基线配置，关注数据连续性与波动是否与雨量/地质条件相关。",
+        title: `检查上报超时：${d.name}`,
+        description:
+          "设备仍处于启用状态，但数据已超过在线时效窗口。建议检查供电、无线链路和网关接收记录。",
         stationId: d.stationId,
-        stationName: d.stationName,
+        stationName: d.stationId ? d.stationName : "未绑定监测点",
         deviceId: d.id,
         deviceName: d.name,
         category: "device",
         priority: "mid",
-        createdAt: now
+        createdAt: d.lastSeenAt,
       });
     }
   }
 
   for (const st of stations) {
-    if (st.risk !== "high") continue;
+    const measuredRisk = st.metadata?.riskLevel ?? st.metadata?.risk_level;
+    if (measuredRisk !== "high") continue;
+    const riskUpdatedAt = st.metadata?.riskUpdatedAt ?? st.metadata?.risk_updated_at;
     tasks.push({
       id: `sys:station-focus:${st.id}`,
       source: "system",
       title: `重点站点关注：${st.name}`,
-      description: "建议在强降雨时段提高巡检频次，并重点关注 GNSS 位移速度与设备离线情况。",
+      description: "建议提高现场巡检频次，并重点关注倾角、土壤水分与设备上报连续性。",
       stationId: st.id,
       stationName: st.name,
       category: "site",
-      priority: st.status === "warning" ? "high" : "mid",
-      createdAt: now
+      priority: "high",
+      createdAt: typeof riskUpdatedAt === "string" ? riskUpdatedAt : "",
     });
   }
-
-  tasks.push({
-    id: "sys:daily-checklist",
-    source: "system",
-    title: "例行检查：确认上报链路与告警规则",
-    description: "建议确认采集链路、告警规则启停、值班通知通道与大屏数据刷新是否正常。",
-    category: "data",
-    priority: "low",
-    createdAt: now
-  });
 
   const unique = new Map(tasks.map((t) => [t.id, t] as const));
   return Array.from(unique.values());

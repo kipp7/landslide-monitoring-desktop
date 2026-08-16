@@ -5,18 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { Baseline, BaselineStatus, Device } from "../api/client";
 import { useApi } from "../api/ApiProvider";
 import { BaseCard } from "../components/BaseCard";
+import { isFormalGnssDevice } from "../utils/deviceCapabilities";
 
 type EditState =
   | { open: false }
   | { open: true; mode: "create" | "edit"; deviceId?: string; baseline?: Baseline };
-
-function normalizeIdentityClass(value?: string | null): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function isFormalIdentityClass(value?: string | null): boolean {
-  return normalizeIdentityClass(value) === "formal";
-}
 
 function baselineStatusTag(status: BaselineStatus) {
   if (status === "active") return <Tag color="green">已建立</Tag>;
@@ -44,7 +37,7 @@ export function BaselinesPanel(props: { className?: string; style?: React.CSSPro
     setLoading(true);
     try {
       const [devicesList, baselineList] = await Promise.all([api.devices.list(), api.baselines.list()]);
-      setDevices(devicesList.filter((x) => x.type === "gnss" && isFormalIdentityClass(x.identityClass)));
+      setDevices(devicesList.filter(isFormalGnssDevice));
       setBaselines(baselineList);
     } finally {
       setLoading(false);
@@ -167,7 +160,7 @@ export function BaselinesPanel(props: { className?: string; style?: React.CSSPro
                 render: (baseline?: Baseline) =>
                   baseline ? (
                     <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                      {baseline.baselineLat.toFixed(6)}, {baseline.baselineLng.toFixed(6)}
+                      {baseline.baselineLat.toFixed(9)}, {baseline.baselineLng.toFixed(9)}
                     </span>
                   ) : (
                     <span style={{ color: "rgba(148,163,184,0.9)" }}>-</span>
@@ -269,14 +262,14 @@ export function BaselinesPanel(props: { className?: string; style?: React.CSSPro
           </Form.Item>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Form.Item name="baselineLat" label="纬度" rules={[{ required: true }]}>
-              <InputNumber style={{ width: "100%" }} precision={6} placeholder="例如 30.123456" />
+              <InputNumber style={{ width: "100%" }} precision={9} step={0.000000001} placeholder="例如 30.123456789" />
             </Form.Item>
             <Form.Item name="baselineLng" label="经度" rules={[{ required: true }]}>
-              <InputNumber style={{ width: "100%" }} precision={6} placeholder="例如 104.123456" />
+              <InputNumber style={{ width: "100%" }} precision={9} step={0.000000001} placeholder="例如 104.123456789" />
             </Form.Item>
           </div>
           <Form.Item name="baselineAlt" label="高程（m）">
-            <InputNumber style={{ width: "100%" }} precision={2} />
+            <InputNumber style={{ width: "100%" }} precision={3} step={0.001} />
           </Form.Item>
           <Form.Item name="status" label="状态" rules={[{ required: true }]}>
             <Select

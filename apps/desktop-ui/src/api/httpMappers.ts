@@ -138,7 +138,8 @@ function normalizeStationStatus(value: StationPayload["status"]): Station["statu
 
 function normalizeDeviceType(value: unknown): DeviceType {
   const raw = readString(value).toLowerCase();
-  if (raw === "gnss" || raw === "gps" || raw === "multi_sensor" || raw === "multisensor") return "gnss";
+  if (raw === "gnss" || raw === "gps") return "gnss";
+  if (raw === "multi_sensor" || raw === "multisensor") return "multi_sensor";
   if (raw === "rain" || raw === "rainfall") return "rain";
   if (raw === "tilt" || raw === "inclinometer") return "tilt";
   if (raw === "camera" || raw === "video") return "camera";
@@ -233,7 +234,11 @@ export function mapDashboardSummaryFromV1(input: DashboardPayload): DashboardSum
   return {
     stationCount: Number(input.stations ?? 0),
     deviceOnlineCount: Number(input.onlineDevices ?? 0),
+    totalDeviceCount: Number(input.totalDevices ?? 0),
+    offlineDeviceCount: Number(input.offlineDevices ?? 0),
+    freshDeviceCount: Number(input.freshDevices ?? 0),
     alertCountToday: Number(input.todayAlerts ?? 0),
+    pendingAlertCount: Number(input.pendingAlerts ?? 0),
     systemHealthPercent: Math.max(0, Math.min(100, Math.round(healthScore * 100)))
   };
 }
