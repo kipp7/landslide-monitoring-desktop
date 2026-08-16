@@ -2,213 +2,215 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="山体滑坡监测桌面端 安装程序"
-        Icon="LandslideDesk.ico"
-        Height="560"
-        Width="920"
-        WindowStartupLocation="CenterScreen"
-        Background="Transparent"
-        ResizeMode="NoResize"
-        WindowStyle="None"
-        AllowsTransparency="True">
+        Icon="pack://application:,,,/LandslideDesk.CustomBA;component/Assets/LandslideDesk.ico"
+        Width="920" Height="580" MinWidth="920" MinHeight="580"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
     <Window.Resources>
-        <Style x:Key="PrimaryActionButtonStyle" TargetType="Button">
-            <Setter Property="Foreground" Value="#07131D" />
-            <Setter Property="Background" Value="#5BC3E0" />
-            <Setter Property="BorderBrush" Value="#5BC3E0" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="#7F8E99" />
-                    <Setter Property="Background" Value="#22323D" />
-                    <Setter Property="BorderBrush" Value="#31424F" />
-                </Trigger>
-            </Style.Triggers>
+        <SolidColorBrush x:Key="TextPrimary" Color="#F4F8F9" />
+        <SolidColorBrush x:Key="TextSecondary" Color="#9EAFB5" />
+        <SolidColorBrush x:Key="Accent" Color="#45D6AD" />
+
+        <Style TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
         </Style>
 
-        <Style x:Key="SecondaryActionButtonStyle" TargetType="Button">
-            <Setter Property="Foreground" Value="#F4F7FA" />
-            <Setter Property="Background" Value="#1B2D3E" />
-            <Setter Property="BorderBrush" Value="#35556F" />
+        <Style x:Key="WindowButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="42" />
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#B8C7CC" />
+            <Setter Property="FontFamily" Value="Arial" />
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" CornerRadius="5" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#18FFFFFF" /><Setter Property="Foreground" Value="White" /></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#28FFFFFF" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="44" />
+            <Setter Property="MinWidth" Value="126" />
+            <Setter Property="Padding" Value="22,0" />
+            <Setter Property="Background" Value="{StaticResource Accent}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#071B17" />
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" CornerRadius="5" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#64E2BD" /></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#30BD96" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Background" Value="#29453E" /><Setter Property="Foreground" Value="#708B84" /><Setter Property="Cursor" Value="Arrow" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Background" Value="#0FFFFFFF" />
+            <Setter Property="Foreground" Value="#D7E2E5" />
+            <Setter Property="BorderBrush" Value="#32FFFFFF" />
             <Setter Property="BorderThickness" Value="1" />
-            <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="#7F8E99" />
-                    <Setter Property="Background" Value="#16222B" />
-                    <Setter Property="BorderBrush" Value="#2A3945" />
-                </Trigger>
-            </Style.Triggers>
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" CornerRadius="5" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#1CFFFFFF" /><Setter TargetName="Surface" Property="BorderBrush" Value="#50FFFFFF" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Background" Value="#08FFFFFF" /><Setter TargetName="Surface" Property="BorderBrush" Value="#18FFFFFF" /><Setter Property="Foreground" Value="#5C7076" /><Setter Property="Cursor" Value="Arrow" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="LaunchCheckBoxStyle" TargetType="CheckBox">
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="#C8D5D9" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal">
+                            <Border x:Name="Box" Width="18" Height="18" CornerRadius="4" Background="#0EFFFFFF" BorderBrush="#55FFFFFF" BorderThickness="1">
+                                <TextBlock x:Name="Mark" Text="✓" FontFamily="Segoe UI Symbol" FontSize="12" FontWeight="Bold" Foreground="#071B17" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{StaticResource Accent}" /><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Accent}" /><Setter TargetName="Mark" Property="Visibility" Value="Visible" /></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="#8AE7CE" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
-    <Grid Background="Transparent" MouseLeftButtonDown="RootSurface_OnMouseLeftButtonDown">
-        <Border Margin="8" Background="#07131D" CornerRadius="36" BorderBrush="#244157" BorderThickness="1">
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="28" ShadowDepth="0" Color="#AA02070C" Opacity="0.9" />
-            </Border.Effect>
-            <Border Margin="4" Background="#0B1723" CornerRadius="32" BorderBrush="#1D3346" BorderThickness="1">
-                <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="58" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="310" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+    <Border Margin="12"
+            CornerRadius="14"
+            Background="#FF091820"
+            BorderBrush="#36FFFFFF"
+            BorderThickness="1"
+            MouseLeftButtonDown="RootSurface_OnMouseLeftButtonDown">
+        <Border.Effect><DropShadowEffect BlurRadius="38" ShadowDepth="2" Direction="270" Color="#D0000000" Opacity="0.78" /></Border.Effect>
+        <Grid ClipToBounds="True">
+            <Grid.Clip>
+                <RectangleGeometry Rect="0,0,894,554" RadiusX="13" RadiusY="13" />
+            </Grid.Clip>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="322" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
 
-            <Grid Grid.Row="0" Grid.ColumnSpan="2" Margin="18,14,18,0" MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="46" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="28" Height="28" CornerRadius="14" Background="#132A3C">
-                        <Image Source="LandslideDesk.ico" Width="18" Height="18" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <StackPanel Margin="12,0,0,0">
-                        <TextBlock Text="山体滑坡监测桌面端" FontSize="15" FontWeight="SemiBold" Foreground="#EAF1F6" />
-                        <TextBlock Text="安装程序" FontSize="12" Foreground="#8FB2C7" />
+            <Grid Grid.Column="0">
+                <Grid.Background>
+                    <ImageBrush ImageSource="pack://application:,,,/LandslideDesk.CustomBA;component/Assets/landslide.png" Stretch="UniformToFill" AlignmentX="Center" AlignmentY="Center" />
+                </Grid.Background>
+                <Rectangle Fill="#A9081D27" />
+                <Rectangle>
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#26153945" Offset="0" /><GradientStop Color="#E4091B22" Offset="1" /></LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+                <Grid Margin="30,30,28,28">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal">
+                        <Image Source="pack://application:,,,/LandslideDesk.CustomBA;component/Assets/app-icon.png" Width="38" Height="38" Stretch="Uniform" />
+                        <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="LANDSLIDE DESK" FontSize="11" FontWeight="SemiBold" Foreground="#8FE4CE" />
+                            <TextBlock Margin="0,3,0,0" Text="部署中心" FontSize="11" Foreground="#AFC2C8" />
+                        </StackPanel>
                     </StackPanel>
-                </StackPanel>
-                <Button Grid.Column="1"
-                        Width="38"
-                        Height="38"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Background="#112130"
-                        Foreground="#EAF1F6"
-                        BorderBrush="#29465D"
-                        Content="×"
-                        FontSize="18"
-                        Click="CloseButton_OnClick" />
+                    <StackPanel Grid.Row="1" VerticalAlignment="Center">
+                        <TextBlock Text="山体滑坡监测" FontSize="28" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,5,0,0" Text="桌面端" FontSize="28" FontWeight="SemiBold" />
+                        <Border Width="44" Height="2" Margin="0,20,0,18" HorizontalAlignment="Left" Background="{StaticResource Accent}" />
+                        <TextBlock Text="让现场数据、风险研判与预警处置&#x0a;在同一工作台完成。" FontSize="13" Foreground="#C4D2D6" LineHeight="23" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="2">
+                        <TextBlock Text="WINDOWS  X64" FontSize="10" FontWeight="SemiBold" Foreground="#7FD6BF" />
+                        <TextBlock Margin="0,7,0,0" Text="本地安装  ·  自动补齐运行环境" FontSize="11" Foreground="#AFC0C5" />
+                    </StackPanel>
+                </Grid>
             </Grid>
 
-            <Border Grid.Row="1" Background="#10263A" CornerRadius="0,0,0,32">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Border Margin="22" CornerRadius="24" Background="#16364F">
-                        <Grid>
-                            <Grid.Background>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                    <GradientStop Color="#17344C" Offset="0" />
-                                    <GradientStop Color="#0A1521" Offset="1" />
-                                </LinearGradientBrush>
-                            </Grid.Background>
-                            <Canvas>
-                                <Ellipse Width="180" Height="180" Canvas.Left="18" Canvas.Top="18" Fill="#203D57" />
-                                <Ellipse Width="22" Height="22" Canvas.Left="222" Canvas.Top="62" Fill="#C5A05B" />
-                                <Path Stroke="#4FA6D7" StrokeThickness="3" Data="M 12 250 C 70 200 124 188 190 194 C 246 198 278 212 322 246" />
-                                <Path Stroke="#315E82" StrokeThickness="2" Data="M 12 276 C 84 228 154 218 228 226 C 276 232 314 246 352 274" />
-                                <Path Stroke="#2A4B67" StrokeThickness="2" Data="M 0 326 C 66 294 136 286 210 294 C 276 302 328 324 380 356" />
-                            </Canvas>
-                            <StackPanel Margin="28,34,28,28" VerticalAlignment="Top">
-                                <TextBlock Text="LANDSLIDE DESK" FontSize="14" FontWeight="Bold" Foreground="#D2B163" />
-                                <TextBlock Margin="0,18,0,0" Text="山体滑坡监测桌面端" FontSize="34" FontWeight="Bold" Foreground="#F3F7FA" TextWrapping="Wrap" />
-                                <TextBlock Margin="0,16,0,0" Text="用于现场安装与部署的桌面端安装程序。" FontSize="16" Foreground="#C8D6E2" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-                    <StackPanel Grid.Row="1" Margin="28,0,28,28">
-                        <TextBlock Text="面向 Windows x64 设备" FontSize="15" FontWeight="SemiBold" Foreground="#F3F7FA" />
-                        <TextBlock Margin="0,10,0,0" Text="安装完成后可从开始菜单直接启动桌面端。" FontSize="13" Foreground="#B9C9D6" TextWrapping="Wrap" />
+            <Grid Grid.Column="1" Background="#FA0A1820">
+                <Grid.RowDefinitions><RowDefinition Height="54" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="24,0,16,0" MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /></Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="7" Height="7" Fill="{StaticResource Accent}" />
+                        <TextBlock Margin="9,0,0,0" Text="安装程序" FontSize="12" Foreground="#9CB0B6" />
                     </StackPanel>
+                    <Button Grid.Column="1" Style="{StaticResource WindowButtonStyle}" Content="×" ToolTip="关闭" Click="CloseButton_OnClick" />
                 </Grid>
-            </Border>
 
-            <Grid Grid.Row="1" Grid.Column="1" Margin="30,26,28,24">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <TextBlock Text="安装程序" FontSize="34" FontWeight="Bold" Foreground="#F4F7FA" />
-                <TextBlock Grid.Row="1" Margin="0,14,0,0" Text="为当前用户安装山体滑坡监测桌面端。你可以调整安装目录，并在安装完成后直接启动应用。" FontSize="15" Foreground="#BFD0DD" TextWrapping="Wrap" />
-
-                <StackPanel Grid.Row="2" Margin="0,34,0,0">
-                    <TextBlock Text="安装目录" FontSize="14" FontWeight="SemiBold" Foreground="#E9EEF2" />
-                    <Grid Margin="0,10,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="14" />
-                            <ColumnDefinition Width="120" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="InstallFolderTextBox"
-                                 Grid.Column="0"
-                                 Height="42"
-                                 Padding="14,0"
-                                 VerticalContentAlignment="Center"
-                                 Background="#112130"
-                                 Foreground="#F2F6F8"
-                                 BorderBrush="#2F4E67"
-                                 BorderThickness="1" />
-                        <Button x:Name="BrowseButton"
-                                Grid.Column="2"
-                                Height="42"
-                                Background="#162A3D"
-                                Foreground="#F4F7FA"
-                                BorderBrush="#35556F"
-                                Content="浏览..."
-                                Click="BrowseButton_OnClick" />
-                    </Grid>
-                </StackPanel>
-
-                <StackPanel Grid.Row="3" Margin="0,28,0,0">
-                    <TextBlock Text="安装状态" FontSize="14" FontWeight="SemiBold" Foreground="#E9EEF2" />
-                    <ProgressBar x:Name="OverallProgressBar"
-                                 Margin="0,12,0,0"
-                                 Height="18"
-                                 Minimum="0"
-                                 Maximum="100"
-                                 Value="0"
-                                 Foreground="#5BC3E0"
-                                 Background="#1B2D3E" />
-                    <TextBlock x:Name="StatusText" Margin="0,12,0,0" Text="等待检测..." FontSize="14" Foreground="#D6E2EA" TextWrapping="Wrap" />
-                </StackPanel>
-
-                <Border Grid.Row="4" Margin="0,28,0,0" Background="#0E1C29" CornerRadius="22" Padding="22">
+                <Grid Grid.Row="1" Margin="46,30,44,30">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel>
-                        <TextBlock Text="安装说明" FontSize="14" FontWeight="SemiBold" Foreground="#D2B163" />
-                        <TextBlock Margin="0,12,0,0" Text="1. 选择安装目录" FontSize="14" Foreground="#F2F6F8" />
-                        <TextBlock Margin="0,8,0,0" Text="2. 点击安装开始写入桌面端文件" FontSize="14" Foreground="#F2F6F8" />
-                        <TextBlock Margin="0,8,0,0" Text="3. 安装完成后可直接启动应用或关闭安装程序" FontSize="14" Foreground="#F2F6F8" />
+                        <TextBlock Text="准备安装" FontSize="30" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,8,0,0" Text="确认安装位置，随后将桌面端部署到当前设备。" FontSize="13" Foreground="{StaticResource TextSecondary}" />
                     </StackPanel>
-                </Border>
 
-                <StackPanel Grid.Row="5" Margin="0,28,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button x:Name="InstallButton"
-                            Style="{StaticResource PrimaryActionButtonStyle}"
-                            Width="120"
-                            Height="40"
-                            Margin="0,0,12,0"
-                            Content="安装"
-                            Click="InstallButton_OnClick" />
-                    <Button x:Name="UninstallButton"
-                            Style="{StaticResource SecondaryActionButtonStyle}"
-                            Width="120"
-                            Height="40"
-                            Margin="0,0,12,0"
-                            Content="卸载"
-                            Click="UninstallButton_OnClick" />
-                    <Button x:Name="FinishButton"
-                            Width="120"
-                            Height="40"
-                            Background="#0F1C28"
-                            Foreground="#D3E0E8"
-                            BorderBrush="#2D4559"
-                            Content="完成"
-                            Click="CloseButton_OnClick" />
-                </StackPanel>
+                    <StackPanel Grid.Row="1" Margin="0,30,0,0">
+                        <TextBlock Text="安装位置" FontSize="12" FontWeight="SemiBold" Foreground="#CAD7DA" />
+                        <Grid Margin="0,9,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="10" /><ColumnDefinition Width="86" /></Grid.ColumnDefinitions>
+                            <TextBox x:Name="InstallFolderTextBox" Height="42" Padding="13,0" VerticalContentAlignment="Center" Background="#0DFFFFFF" Foreground="#EAF2F4" BorderBrush="#32FFFFFF" BorderThickness="1" FontFamily="Microsoft YaHei UI" FontSize="12" CaretBrush="{StaticResource Accent}" />
+                            <Button x:Name="BrowseButton" Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}" Height="42" MinWidth="86" Padding="12,0" Content="浏览" Click="BrowseButton_OnClick" />
+                        </Grid>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="2" Margin="0,25,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="安装进度" FontSize="12" FontWeight="SemiBold" Foreground="#CAD7DA" />
+                            <TextBlock x:Name="ProgressText" Grid.Column="1" Text="0%" FontSize="11" Foreground="#65DDBD" />
+                        </Grid>
+                        <ProgressBar x:Name="OverallProgressBar" Margin="0,10,0,0" Height="5" Minimum="0" Maximum="100" Value="0" Foreground="{StaticResource Accent}" Background="#24FFFFFF" BorderThickness="0" />
+                        <TextBlock x:Name="StatusText" Margin="0,12,0,0" MinHeight="40" Text="正在检测安装环境..." FontSize="12" Foreground="#AEBFC4" TextWrapping="Wrap" LineHeight="19" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="3" Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Width="18" Height="18" CornerRadius="9" Background="#1E45D6AD" BorderBrush="#5A45D6AD" BorderThickness="1"><TextBlock Text="✓" FontFamily="Segoe UI Symbol" FontSize="10" Foreground="{StaticResource Accent}" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                        <TextBlock Grid.Column="1" Text="运行组件已随安装包提供；缺少 WebView2 时将自动补齐。" FontSize="11" Foreground="#81959B" VerticalAlignment="Center" />
+                    </Grid>
+
+                    <CheckBox x:Name="LaunchAfterInstallCheckBox" Grid.Row="4" Margin="0,20,0,0" Content="安装完成后启动桌面端" IsChecked="True" Style="{StaticResource LaunchCheckBoxStyle}" VerticalAlignment="Top" />
+
+                    <Grid Grid.Row="5" Margin="0,24,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="10" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Button x:Name="UninstallButton" Grid.Column="0" Style="{StaticResource SecondaryButtonStyle}" MinWidth="112" Content="卸载现有版本" Click="UninstallButton_OnClick" />
+                        <Button x:Name="FinishButton" Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}" MinWidth="94" Content="关闭" Click="FinishButton_OnClick" />
+                        <Button x:Name="InstallButton" Grid.Column="4" Style="{StaticResource PrimaryButtonStyle}" Content="开始安装" Click="InstallButton_OnClick" />
+                    </Grid>
                 </Grid>
-                </Grid>
-            </Border>
-        </Border>
-    </Grid>
+            </Grid>
+        </Grid>
+    </Border>
 </Window>

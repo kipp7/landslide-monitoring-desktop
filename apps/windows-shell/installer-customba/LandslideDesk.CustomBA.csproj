@@ -19,8 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\LandslideDesk.Win\Assets\LandslideDesk.ico" Link="LandslideDesk.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <Resource Include="..\LandslideDesk.Win\Assets\LandslideDesk.ico" Link="Assets\LandslideDesk.ico" />
+    <Resource Include="..\..\desktop-ui\public\images\app-icon.png" Link="Assets\app-icon.png" />
+    <Resource Include="..\..\desktop-ui\public\images\landslide.png" Link="Assets\landslide.png" />
   </ItemGroup>
 </Project>

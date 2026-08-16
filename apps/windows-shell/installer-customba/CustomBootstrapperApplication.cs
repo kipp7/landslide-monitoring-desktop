@@ -11,6 +11,7 @@ namespace LandslideDesk.CustomBA;
 internal sealed class CustomBootstrapperApplication : BootstrapperApplication
 {
     private const string AppDisplayName = "山体滑坡监测桌面端";
+    private const string AppInstallFolderName = "LandslideDesk";
     private const string InstallFolderVariable = "InstallFolder";
     private const string BundleUpgradeCode = "{{F3F4BEB7-6F61-4B44-B86D-2B79F7B4AFD2}}";
     private const string CoreUninstallRegistry = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F223F64-1B4C-4381-BE67-AC3AC8A7A78D}_is1";
@@ -27,16 +28,32 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
     private Thread? hiddenThread;
     private ManualResetEventSlim? hiddenReady;
     private CustomInstallerWindow? window;
+    private System.Windows.Application? windowApplication;
     private Dispatcher? windowDispatcher;
     private Thread? windowThread;
+    private int exitRequested;
 
     protected override void Run()
     {
         this.traceFile = Path.Combine(Path.GetTempPath(), "LandslideDesk.CustomBA.trace." + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + ".log");
+        this.dispatcher = Dispatcher.CurrentDispatcher;
         this.hiddenReady = new ManualResetEventSlim(false);
         this.StartHiddenWindowThread();
-        this.Trace("Run entered action=" + this.plannedAction);
-        Dispatcher.Run();
+        this.Trace("Run entered action=" + this.plannedAction + " thread=" + Environment.CurrentManagedThreadId);
+        try
+        {
+            Dispatcher.Run();
+        }
+        finally
+        {
+            this.Trace("Primary dispatcher loop exited");
+            this.ShutdownAuxiliaryLoops();
+            this.JoinThread(this.windowThread, "visible window");
+            this.JoinThread(this.hiddenThread, "hidden window");
+            this.hiddenReady?.Dispose();
+            this.hiddenReady = null;
+            this.Trace("Run cleanup completed");
+        }
     }
 
     protected override void OnCreate(CreateEventArgs args)
@@ -52,14 +69,13 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
         base.OnStartup(args);
         try
         {
-            this.dispatcher = Dispatcher.CurrentDispatcher;
             var actionCode = this.engine.GetVariableNumeric("WixBundleCommandLineAction");
             this.plannedAction = actionCode == 4 ? LaunchAction.Uninstall : LaunchAction.Install;
             this.autoFlowMode = actionCode == 4 ||
                                 this.commandDisplay == Display.None ||
                                 this.commandDisplay == Display.Passive ||
                                 this.commandRelation != RelationType.None;
-            this.Trace("OnStartup hresult=" + args.HResult);
+            this.Trace("OnStartup hresult=" + args.HResult + " thread=" + Environment.CurrentManagedThreadId);
             this.Trace("PlannedAction=" + this.plannedAction + " rawAction=" + actionCode + " display=" + this.commandDisplay + " relation=" + this.commandRelation + " autoFlow=" + this.autoFlowMode + " commandLine=" + Environment.CommandLine);
 
             if (!this.autoFlowMode)
@@ -84,7 +100,7 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
 
         if (args.Status != 0)
         {
-            this.engine.Quit(args.Status);
+            this.RequestExit(args.Status, "detect failed");
             return;
         }
 
@@ -112,7 +128,7 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
         if (args.Status != 0)
         {
             this.DispatchToWindow(() => this.window?.SetStatus("计划失败: " + args.Status));
-            this.engine.Quit(args.Status);
+            this.RequestExit(args.Status, "plan failed");
             return;
         }
 
@@ -150,23 +166,8 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
     {
         base.OnShutdown(args);
         this.Trace("OnShutdown action=" + args.Action + " hresult=" + args.HResult);
-
-        if (this.hiddenDispatcher is not null)
-        {
-            this.hiddenDispatcher.BeginInvoke(new Action(() =>
-            {
-                this.hiddenSource?.Dispose();
-                Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Normal);
-            }));
-        }
-
-        this.DispatchToWindow(() =>
-        {
-            this.window?.CloseFromEngine();
-            System.Windows.Application.Current?.Shutdown();
-        });
-
-        this.dispatcher?.BeginInvokeShutdown(DispatcherPriority.Normal);
+        this.ShutdownAuxiliaryLoops();
+        this.dispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
     }
 
     private void StartHiddenWindowThread()
@@ -182,7 +183,16 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
             };
             this.hiddenSource = new HwndSource(sourceParameters);
             this.hiddenReady?.Set();
-            Dispatcher.Run();
+            try
+            {
+                Dispatcher.Run();
+            }
+            finally
+            {
+                this.hiddenSource?.Dispose();
+                this.hiddenSource = null;
+                this.Trace("Hidden window loop exited");
+            }
         });
         this.hiddenThread.IsBackground = true;
         this.hiddenThread.SetApartmentState(ApartmentState.STA);
@@ -193,17 +203,44 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
     {
         this.windowThread = new Thread(() =>
         {
-            this.windowDispatcher = Dispatcher.CurrentDispatcher;
-            var app = new System.Windows.Application
+            try
             {
-                ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown
-            };
-            this.window = new CustomInstallerWindow();
-            this.window.SetBusy(true);
-            this.window.SetInstallFolder(this.GetCurrentInstallFolder());
-            this.window.SetStatus("正在初始化安装器...");
+                this.Trace("Visible window thread entered");
+                this.windowDispatcher = Dispatcher.CurrentDispatcher;
+                var app = new System.Windows.Application
+                {
+                    ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown
+                };
+                this.windowApplication = app;
+                this.window = new CustomInstallerWindow();
+                this.Trace("Visible window constructed");
+                this.window.SetBusy(true);
+                this.window.SetInstallFolder(this.GetCurrentInstallFolder());
+                this.window.SetStatus("正在初始化安装器...");
+                // Detect commonly completes before the WPF thread is ready. Apply the current state here as well.
+                if (this.commandDisplay == Display.Full && this.commandRelation == RelationType.None)
+                {
+                    this.window.SetDetectedAction(this.plannedAction);
+                    this.window.SetInstallFolder(this.GetCurrentInstallFolder());
+                    this.window.SetStatus(this.GetDetectedStatus());
+                    this.window.SetBusy(false);
+                    this.Trace("Visible window synchronized after detect");
+                }
             this.window.PlanRequested += (_, action) =>
             {
+                if (action == LaunchAction.Uninstall && this.TryGetCoreUninstallCommand(out var coreUninstallCommand))
+                {
+                    this.DispatchToWindow(() =>
+                    {
+                        this.window?.SetBusy(true);
+                        this.window?.SetStatus("正在卸载旧版桌面端，请等待卸载程序完成...");
+                        this.window?.SetProgress(20);
+                    });
+                    _ = this.RunRegisteredBundleUninstallAsync(coreUninstallCommand);
+                    this.Trace("Manual uninstall delegated to core installer");
+                    return;
+                }
+
                 if (action == LaunchAction.Uninstall && this.TryGetRegisteredBundleUninstallCommand(out var uninstallCommand))
                 {
                     this.DispatchToWindow(() =>
@@ -254,9 +291,23 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
                 }
                 this.engine.Plan(action);
                 this.Trace("Manual plan requested action=" + action);
-            };
-            this.window.CloseRequested += (_, _) => this.engine.Quit(0);
-            app.Run(this.window);
+                };
+                this.window.CloseRequested += (_, _) => this.RequestExit(0, "window closed by user");
+                this.window.LaunchRequested += (_, _) => this.LaunchInstalledApplication();
+                this.window.Loaded += (_, _) => this.Trace("Visible window loaded");
+                app.Run(this.window);
+                this.Trace("Visible window loop exited");
+            }
+            catch (Exception ex)
+            {
+                this.Trace("Visible window thread exception=" + ex);
+                this.RequestExit(unchecked((int)0x80004005), "visible window failure");
+            }
+            finally
+            {
+                this.window = null;
+                this.windowApplication = null;
+            }
         });
         this.windowThread.IsBackground = true;
         this.windowThread.SetApartmentState(System.Threading.ApartmentState.STA);
@@ -265,7 +316,116 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
 
     private void DispatchToWindow(Action action)
     {
-        this.windowDispatcher?.BeginInvoke(action);
+        var target = this.windowDispatcher;
+        if (target is null || target.HasShutdownStarted || target.HasShutdownFinished)
+        {
+            return;
+        }
+
+        target.BeginInvoke(action);
+    }
+
+    private void RequestExit(int exitCode, string reason)
+    {
+        if (Interlocked.Exchange(ref this.exitRequested, 1) != 0)
+        {
+            this.Trace("Exit already requested; ignored reason=" + reason);
+            return;
+        }
+
+        this.Trace("Exit requested code=" + exitCode + " reason=" + reason);
+        try
+        {
+            this.engine.Quit(exitCode);
+        }
+        catch (Exception ex)
+        {
+            this.Trace("Engine quit exception=" + ex);
+            this.ShutdownAuxiliaryLoops();
+            this.dispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
+        }
+    }
+
+    private void ShutdownAuxiliaryLoops()
+    {
+        var visible = this.windowDispatcher;
+        if (visible is not null && !visible.HasShutdownStarted && !visible.HasShutdownFinished)
+        {
+            try
+            {
+                visible.BeginInvoke(DispatcherPriority.Send, new Action(() =>
+                {
+                    this.Trace("Stopping visible window loop");
+                    this.window?.CloseFromEngine();
+                    this.windowApplication?.Shutdown();
+                    Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+                }));
+            }
+            catch (Exception ex)
+            {
+                this.Trace("Visible window shutdown exception=" + ex);
+            }
+        }
+
+        var hidden = this.hiddenDispatcher;
+        if (hidden is not null && !hidden.HasShutdownStarted && !hidden.HasShutdownFinished)
+        {
+            try
+            {
+                hidden.BeginInvoke(DispatcherPriority.Send, new Action(() =>
+                {
+                    this.Trace("Stopping hidden window loop");
+                    this.hiddenSource?.Dispose();
+                    this.hiddenSource = null;
+                    Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+                }));
+            }
+            catch (Exception ex)
+            {
+                this.Trace("Hidden window shutdown exception=" + ex);
+            }
+        }
+    }
+
+    private void JoinThread(Thread? thread, string name)
+    {
+        if (thread is null || thread == Thread.CurrentThread || !thread.IsAlive)
+        {
+            return;
+        }
+
+        if (thread.Join(TimeSpan.FromSeconds(5)))
+        {
+            this.Trace(name + " thread joined");
+            return;
+        }
+
+        this.Trace(name + " thread did not stop within 5 seconds");
+    }
+
+    private void LaunchInstalledApplication()
+    {
+        try
+        {
+            var executablePath = Path.Combine(this.GetCurrentInstallFolder(), "LandslideDesk.Win.exe");
+            if (!File.Exists(executablePath))
+            {
+                this.Trace("Launch skipped because executable was not found: " + executablePath);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = executablePath,
+                WorkingDirectory = Path.GetDirectoryName(executablePath) ?? string.Empty,
+                UseShellExecute = true
+            });
+            this.Trace("Installed application launched: " + executablePath);
+        }
+        catch (Exception ex)
+        {
+            this.Trace("LaunchInstalledApplication exception=" + ex);
+        }
     }
 
     private bool HasExistingInstallation()
@@ -319,12 +479,28 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
         return false;
     }
 
+    private bool TryGetCoreUninstallCommand(out string commandLine)
+    {
+        commandLine = string.Empty;
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F223F64-1B4C-4381-BE67-AC3AC8A7A78D}_is1");
+        if (key is null)
+        {
+            return false;
+        }
+
+        commandLine = (key.GetValue("QuietUninstallString") as string)
+            ?? (key.GetValue("UninstallString") as string)
+            ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(commandLine);
+    }
+
     private static string GetDefaultInstallFolder()
     {
         return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Programs",
-            AppDisplayName);
+            AppInstallFolderName);
     }
 
     private static string NormalizeInstallFolder(string? path)
@@ -443,6 +619,13 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
             var exitCode = process.ExitCode;
             this.Trace("Registered bundle uninstall exit=" + exitCode);
 
+            var coreUninstallStillRegistered = this.TryGetCoreUninstallCommand(out _);
+            if (exitCode == 0 && coreUninstallStillRegistered)
+            {
+                exitCode = unchecked((int)0x80004005);
+                this.Trace("Uninstall reported success but core ARP entry remains");
+            }
+
             this.DispatchToWindow(() =>
             {
                 this.window?.SetProgress(exitCode == 0 ? 100 : 0);
@@ -471,15 +654,15 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
 
     private string GetCurrentInstallFolder()
     {
+        var current = NormalizeInstallFolder(this.engine.GetVariableString(InstallFolderVariable));
+        if (this.plannedAction == LaunchAction.Install)
+        {
+            return !string.IsNullOrWhiteSpace(current) ? current : GetDefaultInstallFolder();
+        }
+
         if (this.TryGetInstallerState(out var state))
         {
             return state.InstallLocation;
-        }
-
-        var current = NormalizeInstallFolder(this.engine.GetVariableString(InstallFolderVariable));
-        if (!string.IsNullOrWhiteSpace(current))
-        {
-            return current;
         }
 
         if (this.TryGetCoreInstallLocation(out var installLocation))
@@ -487,7 +670,7 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
             return installLocation;
         }
 
-        return GetDefaultInstallFolder();
+        return !string.IsNullOrWhiteSpace(current) ? current : GetDefaultInstallFolder();
     }
 
     private bool TryGetCoreInstallLocation(out string installLocation)
@@ -616,7 +799,7 @@ internal sealed class CustomBootstrapperApplication : BootstrapperApplication
 
         if (this.autoFlowMode)
         {
-            this.engine.Quit(args.Status);
+            this.RequestExit(args.Status, "automatic apply completed");
         }
     }
 

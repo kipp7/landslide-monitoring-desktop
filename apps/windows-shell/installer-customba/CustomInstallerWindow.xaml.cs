@@ -12,10 +12,13 @@ namespace LandslideDesk.CustomBA;
 
 public partial class CustomInstallerWindow : Window
 {
+    private const long RequiredFreeSpaceBytes = 750L * 1024L * 1024L;
     private bool closingFromEngine;
     private bool isBusy;
+    private bool installCompletedSuccessfully;
 
     public event EventHandler<LaunchAction>? PlanRequested;
+    public event EventHandler? LaunchRequested;
     public event EventHandler? CloseRequested;
 
     public CustomInstallerWindow()
@@ -40,7 +43,9 @@ public partial class CustomInstallerWindow : Window
 
     public void SetProgress(int value)
     {
-        this.OverallProgressBar.Value = value;
+        var normalizedValue = Math.Clamp(value, 0, 100);
+        this.OverallProgressBar.Value = normalizedValue;
+        this.ProgressText.Text = normalizedValue + "%";
     }
 
     public void SetDetectedAction(LaunchAction action)
@@ -55,6 +60,7 @@ public partial class CustomInstallerWindow : Window
         this.InstallButton.IsEnabled = !value;
         this.UninstallButton.IsEnabled = !value;
         this.BrowseButton.IsEnabled = !value;
+        this.InstallFolderTextBox.IsReadOnly = value;
     }
 
     public void SetCompletedState(LaunchAction action, bool success)
@@ -62,6 +68,7 @@ public partial class CustomInstallerWindow : Window
         this.isBusy = false;
         this.BrowseButton.IsEnabled = false;
         this.FinishButton.IsEnabled = true;
+        this.installCompletedSuccessfully = success && action == LaunchAction.Install;
 
         if (!success)
         {
@@ -72,7 +79,9 @@ public partial class CustomInstallerWindow : Window
 
         this.InstallButton.IsEnabled = false;
         this.UninstallButton.IsEnabled = false;
-        this.FinishButton.Content = "完成";
+        this.FinishButton.Content = this.installCompletedSuccessfully && this.LaunchAfterInstallCheckBox.IsChecked == true
+            ? "启动应用"
+            : "完成";
     }
 
     public void CloseFromEngine()
@@ -97,6 +106,13 @@ public partial class CustomInstallerWindow : Window
             return;
         }
 
+        if (!this.TryValidateInstallFolder(out var validationMessage))
+        {
+            this.SetProgress(0);
+            this.SetStatus(validationMessage);
+            return;
+        }
+
         this.SetBusy(true);
         this.PlanRequested?.Invoke(this, LaunchAction.Install);
     }
@@ -114,6 +130,16 @@ public partial class CustomInstallerWindow : Window
 
     private void CloseButton_OnClick(object sender, RoutedEventArgs e)
     {
+        this.Close();
+    }
+
+    private void FinishButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (this.installCompletedSuccessfully && this.LaunchAfterInstallCheckBox.IsChecked == true)
+        {
+            this.LaunchRequested?.Invoke(this, EventArgs.Empty);
+        }
+
         this.Close();
     }
 
@@ -162,6 +188,48 @@ public partial class CustomInstallerWindow : Window
         {
             return path.Trim().Trim('"');
         }
+    }
+
+    private bool TryValidateInstallFolder(out string message)
+    {
+        var folder = NormalizeInstallFolder(this.InstallFolderTextBox.Text);
+        if (string.IsNullOrWhiteSpace(folder) || !System.IO.Path.IsPathFullyQualified(folder))
+        {
+            message = "安装位置无效，请选择完整的本地磁盘路径。";
+            return false;
+        }
+
+        try
+        {
+            var root = System.IO.Path.GetPathRoot(folder);
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                message = "无法识别安装位置所在磁盘，请重新选择。";
+                return false;
+            }
+
+            var drive = new System.IO.DriveInfo(root);
+            if (!drive.IsReady)
+            {
+                message = "安装位置所在磁盘当前不可用。";
+                return false;
+            }
+
+            if (drive.AvailableFreeSpace < RequiredFreeSpaceBytes)
+            {
+                message = "磁盘空间不足。请至少保留 750 MB 可用空间后再安装。";
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            message = "无法检查安装位置：" + ex.Message;
+            return false;
+        }
+
+        this.InstallFolderTextBox.Text = folder;
+        message = string.Empty;
+        return true;
     }
 
     private void TryBeginWindowDrag(DependencyObject? source, MouseButtonEventArgs e)
